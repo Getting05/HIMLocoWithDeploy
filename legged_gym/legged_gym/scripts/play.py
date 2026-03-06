@@ -130,6 +130,6 @@ def play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0):
 if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
-    MOVE_CAMERA = False
+    MOVE_CAMERA = True
     args = get_args()
     play(args, x_vel=1.0, y_vel=0.0, yaw_vel=0.0)

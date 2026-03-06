@@ -14,9 +14,16 @@
  *   1      – StandUp (interpolate to standing)
  *   2      – RL (policy control)
  *   3      – JointDamping (passive damping)
+ *   5      – SingleStepRL (single-step RL with confirm)
+ *   6      – JointSweep (manual joint direction debug)
  *   Space  – Emergency stop (force Idle)
  *   Esc    – Exit program
  *   R      – Reset velocity to zero
+ *
+ * Debug controls (JointSweep / SingleStepRL):
+ *   Enter  – Confirm / execute current step
+ *   J / K  – Select next / previous joint  (JointSweep)
+ *   + / -  – Increase / decrease offset    (JointSweep)
  */
 #pragma once
 
@@ -59,6 +66,20 @@ public:
     /// Restore terminal and stop thread.
     void cleanup();
 
+    // ---- Debug mode interfaces ----
+
+    /// Consume a pending Enter-key confirmation (returns true once per press).
+    bool consume_step_confirm();
+
+    /// Get currently selected joint index for sweep mode [0..11].
+    int get_sweep_joint_idx() const { return sweep_joint_idx_.load(); }
+
+    /// Get current sweep offset [rad].
+    float get_sweep_offset() const { return sweep_offset_.load(); }
+
+    /// Reset sweep state when entering JointSweep mode.
+    void reset_sweep() { sweep_joint_idx_.store(0); sweep_offset_.store(0.0f); }
+
 private:
     void run();
     void process_key(char key);
@@ -74,6 +95,11 @@ private:
 
     std::optional<StateRequest> state_request_;
     std::atomic<bool> exit_{false};
+
+    // Debug mode state
+    std::atomic<bool> step_confirmed_{false};
+    std::atomic<int> sweep_joint_idx_{0};
+    std::atomic<float> sweep_offset_{0.0f};
 
     // Terminal state backup
     int fd_;

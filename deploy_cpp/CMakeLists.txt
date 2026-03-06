@@ -10,6 +10,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wextra")
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 # LibTorch (PyTorch C++ API)
 # Set Torch_DIR if not found automatically:
@@ -45,6 +46,7 @@ set(SOURCES
     src/policy_runner.cpp
     src/keyboard_controller.cpp
     src/state_machine.cpp
+    src/robot_visualizer.cpp
     src/deploy_node.cpp
 )
 
@@ -53,8 +55,9 @@ set(SOURCES
 set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib;/opt/libtorch/lib")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 
-# ========================== Executable ==========================
+# ========================== Executables ==========================
 
+# Main deploy node
 add_executable(deploy_node ${SOURCES})
 
 target_link_libraries(deploy_node
@@ -65,11 +68,29 @@ target_link_libraries(deploy_node
 ament_target_dependencies(deploy_node
     rclcpp
     std_msgs
+    sensor_msgs
+)
+
+# Motor debug node (standalone, with RViz visualization)
+add_executable(motor_debug_node
+    src/motor_driver.cpp
+    src/robot_visualizer.cpp
+    src/motor_debug_node.cpp
+)
+
+target_link_libraries(motor_debug_node
+    ${UNITREE_SDK_LIB}
+)
+
+ament_target_dependencies(motor_debug_node
+    rclcpp
+    std_msgs
+    sensor_msgs
 )
 
 # ========================== Install ==========================
 
-install(TARGETS deploy_node
+install(TARGETS deploy_node motor_debug_node
     DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -85,6 +106,21 @@ install(DIRECTORY launch/
 
 install(DIRECTORY policy/
     DESTINATION share/${PROJECT_NAME}/policy
+    OPTIONAL
+)
+
+install(DIRECTORY robot/
+    DESTINATION share/${PROJECT_NAME}/robot
+    OPTIONAL
+)
+
+install(DIRECTORY config/
+    DESTINATION share/${PROJECT_NAME}/config
+    OPTIONAL
+)
+
+install(DIRECTORY sim/
+    DESTINATION share/${PROJECT_NAME}/sim
     OPTIONAL
 )
 

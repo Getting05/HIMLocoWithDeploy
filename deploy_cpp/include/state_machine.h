@@ -3,10 +3,12 @@
  * @brief State machine for quadruped robot deployment.
  *
  * States:
- *   IDLE          – Zero torque, motors free-spinning
- *   STAND_UP      – Interpolate from current pose to default standing pose
- *   RL            – Execute RL policy actions
- *   JOINT_DAMPING – Passive damping for safe deceleration
+ *   IDLE            – Zero torque, motors free-spinning
+ *   STAND_UP        – Interpolate from current pose to default standing pose
+ *   RL              – Execute RL policy actions
+ *   JOINT_DAMPING   – Passive damping for safe deceleration
+ *   JOINT_SWEEP     – Manual single-joint sweep for direction verification
+ *   SINGLE_STEP_RL  – Single-step RL with confirm before execution
  */
 #pragma once
 
@@ -19,20 +21,24 @@
 namespace deploy {
 
 enum class RobotState {
-    IDLE          = 0,  ///< Zero torque, motors free-spinning
-    STAND_UP      = 1,  ///< Interpolate to standing pose
-    RL            = 2,  ///< Execute RL policy actions
-    JOINT_DAMPING = 3,  ///< Passive damping for safe deceleration
+    IDLE            = 0,  ///< Zero torque, motors free-spinning
+    STAND_UP        = 1,  ///< Interpolate to standing pose
+    RL              = 2,  ///< Execute RL policy actions
+    JOINT_DAMPING   = 3,  ///< Passive damping for safe deceleration
+    JOINT_SWEEP     = 4,  ///< Manual single-joint sweep (direction debug)
+    SINGLE_STEP_RL  = 5,  ///< Single-step RL with confirm before execution
 };
 
 /// Convert RobotState to human-readable string.
 inline const char* robot_state_name(RobotState s) {
     switch (s) {
-        case RobotState::IDLE:          return "IDLE";
-        case RobotState::STAND_UP:      return "STAND_UP";
-        case RobotState::RL:            return "RL";
-        case RobotState::JOINT_DAMPING: return "JOINT_DAMPING";
-        default:                        return "UNKNOWN";
+        case RobotState::IDLE:           return "IDLE";
+        case RobotState::STAND_UP:       return "STAND_UP";
+        case RobotState::RL:             return "RL";
+        case RobotState::JOINT_DAMPING:  return "JOINT_DAMPING";
+        case RobotState::JOINT_SWEEP:    return "JOINT_SWEEP";
+        case RobotState::SINGLE_STEP_RL: return "SINGLE_STEP_RL";
+        default:                         return "UNKNOWN";
     }
 }
 

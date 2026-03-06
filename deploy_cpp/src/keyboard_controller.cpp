@@ -111,6 +111,35 @@ void KeyboardController::process_key(char key)
         zero_commands();
         break;
 
+    // ---- Debug state transitions ----
+    case '5':
+        state_request_ = StateRequest{RobotState::SINGLE_STEP_RL, false};
+        break;
+    case '6':
+        state_request_ = StateRequest{RobotState::JOINT_SWEEP, false};
+        break;
+
+    // ---- Debug: confirm / execute step ----
+    case '\n': case '\r':
+        step_confirmed_.store(true);
+        break;
+
+    // ---- Debug: joint sweep controls ----
+    case 'j': case 'J':
+        sweep_joint_idx_.store((sweep_joint_idx_.load() + 1) % NUM_JOINTS);
+        sweep_offset_.store(0.0f);  // reset offset when switching joint
+        break;
+    case 'k': case 'K':
+        sweep_joint_idx_.store((sweep_joint_idx_.load() - 1 + NUM_JOINTS) % NUM_JOINTS);
+        sweep_offset_.store(0.0f);
+        break;
+    case '=': case '+':
+        sweep_offset_.store(sweep_offset_.load() + 0.05f);
+        break;
+    case '-': case '_':
+        sweep_offset_.store(sweep_offset_.load() - 0.05f);
+        break;
+
     // ---- Emergency stop ----
     case ' ':
         state_request_ = StateRequest{RobotState::IDLE, true};
@@ -151,6 +180,12 @@ std::optional<StateRequest> KeyboardController::consume_state_request()
     auto req = state_request_;
     state_request_.reset();
     return req;
+}
+
+bool KeyboardController::consume_step_confirm()
+{
+    bool expected = true;
+    return step_confirmed_.compare_exchange_strong(expected, false);
 }
 
 void KeyboardController::restore_terminal()
