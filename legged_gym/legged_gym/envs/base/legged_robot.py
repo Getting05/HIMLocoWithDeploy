@@ -409,6 +409,17 @@ class LeggedRobot(BaseTask):
                 r = self.dof_pos_limits[i, 1] - self.dof_pos_limits[i, 0]
                 self.dof_pos_limits[i, 0] = m - 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
                 self.dof_pos_limits[i, 1] = m + 0.5 * r * self.cfg.rewards.soft_dof_pos_limit
+
+        # support per-joint armature config: cfg.asset.armature can be float or dict
+        armature_cfg = self.cfg.asset.armature
+        if isinstance(armature_cfg, dict):
+            for i, dof_name in enumerate(self.dof_names):
+                if dof_name in armature_cfg:
+                    props["armature"][i] = armature_cfg[dof_name]
+                elif dof_name.endswith("_joint") and dof_name[:-6] in armature_cfg:
+                    props["armature"][i] = armature_cfg[dof_name[:-6]]
+        else:
+            props["armature"][:] = float(armature_cfg)
         return props
 
     def _process_rigid_body_props(self, props, env_id):
@@ -811,7 +822,7 @@ class LeggedRobot(BaseTask):
         asset_options.linear_damping = self.cfg.asset.linear_damping
         asset_options.max_angular_velocity = self.cfg.asset.max_angular_velocity
         asset_options.max_linear_velocity = self.cfg.asset.max_linear_velocity
-        asset_options.armature = self.cfg.asset.armature
+        asset_options.armature = 0.0 if isinstance(self.cfg.asset.armature, dict) else float(self.cfg.asset.armature)
         asset_options.thickness = self.cfg.asset.thickness
         asset_options.disable_gravity = self.cfg.asset.disable_gravity
 
