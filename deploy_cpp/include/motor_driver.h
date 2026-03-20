@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 
+#include "robot_runtime_config.h"
 #include "robot_config.h"
 
 // Forward declarations for Unitree SDK types
@@ -28,6 +29,9 @@ public:
    * @param port0 Device path for front legs (FR+FL), e.g. "/dev/ttyUSB0"
    * @param port1 Device path for rear legs (RR+RL), e.g. "/dev/ttyUSB1"
    */
+  explicit MotorDriver(const RobotRuntimeConfig &config,
+                       const std::string &port0,
+                       const std::string &port1);
   MotorDriver(const std::string &port0 = SERIAL_PORTS[0],
               const std::string &port1 = SERIAL_PORTS[1]);
   ~MotorDriver();
@@ -97,6 +101,7 @@ private:
   std::unique_ptr<MotorCmd> cmd_;
   std::unique_ptr<MotorData> data_;
   int foc_mode_;
+  RobotRuntimeConfig config_;
 
   // Cached joint states
   std::array<float, NUM_JOINTS> dof_pos_{};

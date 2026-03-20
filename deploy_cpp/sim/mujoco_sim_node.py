@@ -20,8 +20,10 @@ Usage:
 import os
 import sys
 import time
+import argparse
 import threading
 import numpy as np
+import yaml
 
 # ROS2
 import rclpy
@@ -38,16 +40,9 @@ import mujoco.viewer
 # Robot configuration (must match robot_config.h)
 # ============================================================
 NUM_JOINTS = 12
-CONTROL_DT = 0.02      # 50 Hz control loop
-SIM_DT = 0.002         # ？？Must match IsaacGym sim.dt (legged_robot_config.py)
-DECIMATION = int(CONTROL_DT / SIM_DT)  # 4 sub-steps (must match control.decimation)
-
-# Joint-side PD gains (from robot_config.h)
-KP_JOINT = 40.0
-KD_JOINT = 1.0
 
 # Joint names in DOF order
-JOINT_NAMES = [
+DEFAULT_JOINT_NAMES = [
     "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
     "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
     "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
@@ -66,11 +61,56 @@ DEFAULT_DOF_POS = np.array([
 TORQUE_LIMIT = 33.5
 
 
+def load_robot_config(path: str) -> dict:
+    with open(path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+
+    required = [
+        'dt', 'decimation', 'num_of_dofs', 'default_dof_pos', 'joint_names',
+        'joint_controller_names', 'torque_limits', 'kp_joint', 'kd_joint', 'joint_transmission_ratio',
+        'mujoco_xml_relpath'
+    ]
+    for key in required:
+        if key not in cfg:
+            raise RuntimeError(f'Missing required key in robot yaml: {key}')
+
+    if int(cfg['num_of_dofs']) != NUM_JOINTS:
+        raise RuntimeError('num_of_dofs must be 12 for this node')
+
+    if len(cfg['joint_names']) != NUM_JOINTS:
+        raise RuntimeError('joint_names length must be 12')
+    if len(cfg['joint_controller_names']) != NUM_JOINTS:
+        raise RuntimeError('joint_controller_names length must be 12')
+    if len(cfg['default_dof_pos']) != NUM_JOINTS:
+        raise RuntimeError('default_dof_pos length must be 12')
+    if len(cfg['torque_limits']) != NUM_JOINTS:
+        raise RuntimeError('torque_limits length must be 12')
+    if len(cfg['joint_transmission_ratio']) != NUM_JOINTS:
+        raise RuntimeError('joint_transmission_ratio length must be 12')
+
+    return cfg
+
+
+def resolve_path(pkg_dir: str, path_value: str) -> str:
+    if os.path.isabs(path_value):
+        return path_value
+    return os.path.join(pkg_dir, path_value)
+
+
 class MujocoSimNode(Node):
     """ROS2 node that runs MuJoCo simulation and publishes sensor data."""
 
-    def __init__(self, xml_path: str):
+    def __init__(self, xml_path: str, cfg: dict):
         super().__init__('mujoco_sim_node')
+        self.cfg = cfg
+        self.control_dt = float(cfg['control_dt']) if 'control_dt' in cfg else float(cfg['dt']) * int(cfg['decimation'])
+        self.sim_dt = float(cfg['dt'])
+        self.decimation = int(cfg['decimation'])
+        self.joint_names = list(cfg['joint_names'])
+        self.joint_controller_names = list(cfg['joint_controller_names'])
+        self.default_dof_pos = np.array(cfg['default_dof_pos'], dtype=np.float32)
+        self.torque_limits = np.array(cfg['torque_limits'], dtype=np.float32)
+        self.joint_transmission_ratio = np.array(cfg['joint_transmission_ratio'], dtype=np.float32)
 
         # Optional pure-simulation ping-pong mode:
         # publish state -> wait for /mujoco/joint_cmd -> step physics
@@ -83,8 +123,8 @@ class MujocoSimNode(Node):
         self.data = mujoco.MjData(self.model)
 
         # Verify timestep
-        assert abs(self.model.opt.timestep - SIM_DT) < 1e-6, \
-            f"XML timestep {self.model.opt.timestep} != expected {SIM_DT}"
+        assert abs(self.model.opt.timestep - self.sim_dt) < 1e-6, \
+            f"XML timestep {self.model.opt.timestep} != expected {self.sim_dt}"
 
         # ---- Build joint index mapping ----
         # Map JOINT_NAMES to MuJoCo joint qpos/qvel indices
@@ -92,7 +132,7 @@ class MujocoSimNode(Node):
         self.joint_qvel_idx = []  # qvel index for each DOF
         self.actuator_idx = []    # actuator index for each DOF
 
-        for i, name in enumerate(JOINT_NAMES):
+        for i, name in enumerate(self.joint_names):
             jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
             if jid < 0:
                 self.get_logger().error(f'Joint "{name}" not found in model!')
@@ -101,14 +141,8 @@ class MujocoSimNode(Node):
             self.joint_qpos_idx.append(self.model.jnt_qposadr[jid])
             self.joint_qvel_idx.append(self.model.jnt_dofadr[jid])
 
-        # Map actuator names (same order as JOINT_NAMES: FR_hip, FR_thigh, ...)
-        actuator_names = [
-            "FR_hip", "FR_thigh", "FR_calf",
-            "FL_hip", "FL_thigh", "FL_calf",
-            "RR_hip", "RR_thigh", "RR_calf",
-            "RL_hip", "RL_thigh", "RL_calf",
-        ]
-        for name in actuator_names:
+        # Map actuators in the exact policy DOF order from YAML.
+        for name in self.joint_controller_names:
             aid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
             if aid < 0:
                 self.get_logger().error(f'Actuator "{name}" not found in model!')
@@ -121,13 +155,13 @@ class MujocoSimNode(Node):
         # ---- Set initial pose ----
         mujoco.mj_resetData(self.model, self.data)
         for i in range(NUM_JOINTS):
-            self.data.qpos[self.joint_qpos_idx[i]] = DEFAULT_DOF_POS[i]
+            self.data.qpos[self.joint_qpos_idx[i]] = self.default_dof_pos[i]
         mujoco.mj_forward(self.model, self.data)
 
         # ---- Target positions (updated by subscriber) ----
-        self.target_pos = DEFAULT_DOF_POS.copy()
-        self.target_kp = KP_JOINT
-        self.target_kd = KD_JOINT
+        self.target_pos = self.default_dof_pos.copy()
+        self.target_kp = float(cfg['kp_joint'])
+        self.target_kd = float(cfg['kd_joint'])
         self.cmd_lock = threading.Lock()
         self.cmd_event = threading.Event()
 
@@ -158,8 +192,8 @@ class MujocoSimNode(Node):
             Float32MultiArray, '/mujoco/joint_cmd', self.cmd_callback, qos_fast)
 
         self.get_logger().info('MuJoCo sim node initialized.')
-        self.get_logger().info(f'  Sim DT: {SIM_DT}s, Decimation: {DECIMATION}, Control DT: {CONTROL_DT}s')
-        self.get_logger().info(f'  PD gains: kp={KP_JOINT}, kd={KD_JOINT}')
+        self.get_logger().info(f'  Sim DT: {self.sim_dt}s, Decimation: {self.decimation}, Control DT: {self.control_dt}s')
+        self.get_logger().info(f'  PD gains: kp={self.target_kp}, kd={self.target_kd}')
 
     def cmd_callback(self, msg: Float32MultiArray):
         """Receive target joint positions from deploy_node."""
@@ -227,11 +261,11 @@ class MujocoSimNode(Node):
         # Step simulation (DECIMATION sub-steps)
         # PD torque is recomputed at EVERY sub-step using latest dof_pos/dof_vel
         # This matches IsaacGym's _compute_torques() called inside the decimation loop
-        for _ in range(DECIMATION):
+        for _ in range(self.decimation):
             cur_pos = self.get_joint_pos()
             cur_vel = self.get_joint_vel()
             tau = kp * (target - cur_pos) - kd * cur_vel
-            tau = np.clip(tau, -TORQUE_LIMIT, TORQUE_LIMIT)
+            tau = np.clip(tau, -self.torque_limits, self.torque_limits)
             for i in range(NUM_JOINTS):
                 self.data.ctrl[self.actuator_idx[i]] = tau[i]
             mujoco.mj_step(self.model, self.data)
@@ -255,7 +289,7 @@ class MujocoSimNode(Node):
         # /joint_states: for RViz
         js_msg = JointState()
         js_msg.header.stamp = self.get_clock().now().to_msg()
-        js_msg.name = list(JOINT_NAMES)
+        js_msg.name = self.joint_names
         js_msg.position = pos.astype(float).tolist()
         js_msg.velocity = vel.astype(float).tolist()
         js_msg.effort = [0.0] * NUM_JOINTS
@@ -306,7 +340,7 @@ class MujocoSimNode(Node):
 
                     # Rate control
                     elapsed = time.time() - loop_start
-                    sleep_time = CONTROL_DT - elapsed
+                    sleep_time = self.control_dt - elapsed
                     if sleep_time > 0:
                         time.sleep(sleep_time)
 
@@ -328,26 +362,49 @@ class MujocoSimNode(Node):
 def main():
     rclpy.init()
 
-    # Find XML path
-    # Try relative path first, then package share directory
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--robot-config', default='',
+                        help='Path to robot yaml config')
+    args, _ = parser.parse_known_args()
+
+    # Find package directory (source workspace preferred)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     pkg_dir = os.path.dirname(script_dir)  # deploy_cpp/
-    xml_path = os.path.join(pkg_dir, 'robot', 'mybot', 'xml', 'mybot.xml')
 
-    if not os.path.exists(xml_path):
-        # Try from ROS2 package share
+    cfg_path = args.robot_config
+    if not cfg_path:
+        cfg_path = os.path.join(pkg_dir, 'config', 'robots', 'mybot.yaml')
+    if not os.path.exists(cfg_path):
         try:
             from ament_index_python.packages import get_package_share_directory
             pkg_share = get_package_share_directory('deploy_cpp')
-            xml_path = os.path.join(pkg_share, 'robot', 'mybot', 'xml', 'mybot.xml')
+            if not args.robot_config:
+                cfg_path = os.path.join(pkg_share, 'config', 'robots', 'mybot.yaml')
+        except Exception:
+            pass
+
+    if not os.path.exists(cfg_path):
+        print(f'ERROR: Cannot find robot yaml config at {cfg_path}')
+        sys.exit(1)
+
+    cfg = load_robot_config(cfg_path)
+    xml_path = resolve_path(pkg_dir, cfg['mujoco_xml_relpath'])
+    if not os.path.exists(xml_path):
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            pkg_share = get_package_share_directory('deploy_cpp')
+            xml_path = resolve_path(pkg_share, cfg['mujoco_xml_relpath'])
         except Exception:
             pass
 
     if not os.path.exists(xml_path):
-        print(f'ERROR: Cannot find mybot.xml at {xml_path}')
+        print(f"ERROR: Cannot find MuJoCo XML from config: {cfg['mujoco_xml_relpath']}")
         sys.exit(1)
 
-    node = MujocoSimNode(xml_path)
+    print(f"[mujoco_sim_node] robot={cfg.get('robot_name', 'unknown')} cfg={cfg_path}")
+    print(f"[mujoco_sim_node] xml={xml_path}")
+
+    node = MujocoSimNode(xml_path, cfg)
 
     try:
         node.run()

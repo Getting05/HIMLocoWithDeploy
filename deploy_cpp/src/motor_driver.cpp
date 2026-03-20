@@ -13,7 +13,10 @@
 
 namespace deploy {
 
-MotorDriver::MotorDriver(const std::string &port0, const std::string &port1) {
+MotorDriver::MotorDriver(const RobotRuntimeConfig &config,
+                         const std::string &port0,
+                         const std::string &port1)
+    : config_(config) {
   std::cout << "[MotorDriver] Opening serial ports: " << port0 << ", " << port1
             << std::endl;
 
@@ -28,14 +31,15 @@ MotorDriver::MotorDriver(const std::string &port0, const std::string &port1) {
 
   // Verify gear ratio from SDK
   float sdk_ratio = queryGearRatio(MotorType::GO_M8010_6);
-  if (std::abs(sdk_ratio - GEAR_RATIO) > 0.1f) {
+  if (std::abs(sdk_ratio - config_.joint_transmission_ratio[0]) > 0.1f) {
     std::cout << "[MotorDriver] WARNING: SDK gear ratio " << sdk_ratio
-              << " != config " << GEAR_RATIO << std::endl;
+              << " != config " << config_.joint_transmission_ratio[0]
+              << std::endl;
   }
 
   // Initialize offsets to zero (will be calibrated below)
   motor_offsets_.fill(0.0f);
-  dof_pos_ = DEFAULT_DOF_POS; // Initialize to standing pose
+  dof_pos_ = config_.default_dof_pos; // Initialize to configured pose
   dof_vel_.fill(0.0f);
   motor_temps_.fill(0.0f);
   motor_errors_.fill(0);
@@ -43,6 +47,9 @@ MotorDriver::MotorDriver(const std::string &port0, const std::string &port1) {
   // Calibrate encoder offsets so initial readings = DEFAULT_DOF_POS
   calibrate_offsets();
 }
+
+MotorDriver::MotorDriver(const std::string &port0, const std::string &port1)
+    : MotorDriver(default_robot_runtime_config(), port0, port1) {}
 
 MotorDriver::~MotorDriver() {
   // Serials are cleaned up by unique_ptr
@@ -79,17 +86,18 @@ void MotorDriver::calibrate_offsets() {
 
       if (r == NUM_READS - 1 && data_->correct &&
           static_cast<int>(data_->motor_id) == mapping.motor_id) {
-        // offset = raw_q - direction * DEFAULT_DOF_POS[i] * GEAR_RATIO
-        // So that: direction * (raw_q - offset) / GEAR_RATIO =
-        // DEFAULT_DOF_POS[i]
+        const float ratio = config_.joint_transmission_ratio[i];
+        // offset = raw_q - direction * q_joint * ratio
         float raw_q = data_->q;
-        motor_offsets_[i] = raw_q - direction * DEFAULT_DOF_POS[i] * GEAR_RATIO;
-        dof_pos_[i] = DEFAULT_DOF_POS[i];
-        dof_vel_[i] = direction * data_->dq / GEAR_RATIO;
+        motor_offsets_[i] =
+          raw_q - direction * config_.default_dof_pos[i] * ratio;
+        dof_pos_[i] = config_.default_dof_pos[i];
+        dof_vel_[i] = direction * data_->dq / ratio;
 
         std::cout << "[MotorDriver] " << JOINT_NAMES[i] << ": raw_q=" << raw_q
                   << " offset=" << motor_offsets_[i]
-                  << " -> joint=" << DEFAULT_DOF_POS[i] << " rad" << std::endl;
+              << " -> joint=" << config_.default_dof_pos[i] << " rad"
+              << std::endl;
       } else if (r == NUM_READS - 1) {
         std::cout << "[MotorDriver] WARNING: " << JOINT_NAMES[i] << " (motor "
                   << mapping.motor_id << ") did not reply, using offset=0"
@@ -108,19 +116,23 @@ void MotorDriver::calibrate_offsets() {
 void MotorDriver::send_single(int dof_idx, float q_joint, float dq_joint,
                               float kp, float kd, float tau) {
   const auto &mapping = MOTOR_MAP[dof_idx];
+  const float ratio = config_.joint_transmission_ratio[dof_idx];
   float direction = mapping.is_reversed ? -1.0f : 1.0f;
 
   // Convert joint-side → motor-side
-  float q_motor = direction * q_joint * GEAR_RATIO + motor_offsets_[dof_idx];
-  float dq_motor = direction * dq_joint * GEAR_RATIO;
+  float q_motor = direction * q_joint * ratio + motor_offsets_[dof_idx];
+  float dq_motor = direction * dq_joint * ratio;
+  float tau_motor = direction * tau / ratio;
+  float kp_motor = kp / (ratio * ratio);
+  float kd_motor = kd / (ratio * ratio);
 
   cmd_->mode = foc_mode_;
   cmd_->id = static_cast<unsigned short>(mapping.motor_id);
   cmd_->q = q_motor;
   cmd_->dq = dq_motor;
-  cmd_->kp = kp;
-  cmd_->kd = kd;
-  cmd_->tau = tau;
+  cmd_->kp = kp_motor;
+  cmd_->kd = kd_motor;
+  cmd_->tau = tau_motor;
 
   // Reset correct flag before sendRecv
   data_->correct = false;
@@ -129,9 +141,8 @@ void MotorDriver::send_single(int dof_idx, float q_joint, float dq_joint,
 
   // Only update cached values if the motor actually replied
   if (data_->correct && static_cast<int>(data_->motor_id) == mapping.motor_id) {
-    dof_pos_[dof_idx] =
-        direction * (data_->q - motor_offsets_[dof_idx]) / GEAR_RATIO;
-    dof_vel_[dof_idx] = direction * data_->dq / GEAR_RATIO;
+    dof_pos_[dof_idx] = direction * (data_->q - motor_offsets_[dof_idx]) / ratio;
+    dof_vel_[dof_idx] = direction * data_->dq / ratio;
     motor_temps_[dof_idx] = static_cast<float>(data_->temp);
     motor_errors_[dof_idx] = data_->merror;
   }

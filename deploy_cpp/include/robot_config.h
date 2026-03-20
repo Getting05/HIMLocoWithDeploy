@@ -130,19 +130,6 @@ constexpr int HISTORY_LENGTH = 6;
 constexpr int NUM_OBS = NUM_ONE_STEP_OBS * HISTORY_LENGTH; // 270
 
 // Clipping (from legged_robot_config.py normalization)
-[WARNING] SerialPort::recv, unblock version, wait time out
-[WARNING] motor id=12 does not reply
-[WARNING] SerialPort::recv, unblock version, wait time out
-[WARNING] motor id=7 does not reply
-[WARNING] SerialPort::recv, unblock version, wait time out
-[WARNING] motor id=8 does not reply
-[WARNING] SerialPort::recv, unblock version, wait time out
-[WARNING] motor id=9 does not reply
-[IDLE] loop=4646 imu=OK cmd=[0.00,0.00,0.00] ang_vel=[0.00,0.00,0.00] grav=[0.00,0.00,-1.00]       [WARNING] SerialPort::recv, unblock version, wait time out
-[WARNING] motor id=1 does not reply
-[WARNING] SerialPort::recv, unblock version, wait time out
-[WARNING] motor id=2 does not reply
-[WARNING] SerialPort::recv, unblock version,
 constexpr float CLIP_OBS = 100.0f;
 constexpr float CLIP_ACTIONS = 100.0f;
 

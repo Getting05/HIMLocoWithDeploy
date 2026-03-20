@@ -11,9 +11,11 @@
 
 namespace deploy {
 
-StateMachine::StateMachine() {
+StateMachine::StateMachine(const RobotRuntimeConfig &config) {
   state_ = RobotState::IDLE;
   standup_start_pos_.fill(0.0f);
+  standup_target_pos_ = config.standup_target_pos;
+  standup_duration_ = config.standup_duration;
 }
 
 bool StateMachine::is_valid_transition(RobotState from, RobotState to) const {
@@ -101,7 +103,7 @@ std::array<float, NUM_JOINTS> StateMachine::get_standup_target(
   auto now = std::chrono::steady_clock::now();
   float elapsed =
       std::chrono::duration<float>(now - standup_start_time_).count();
-  float alpha = std::clamp(elapsed / STANDUP_DURATION, 0.0f, 1.0f);
+  float alpha = std::clamp(elapsed / standup_duration_, 0.0f, 1.0f);
 
   if (alpha >= 1.0f) {
     standup_complete_ = true;
@@ -111,7 +113,7 @@ std::array<float, NUM_JOINTS> StateMachine::get_standup_target(
   std::array<float, NUM_JOINTS> target;
   for (int i = 0; i < NUM_JOINTS; ++i) {
     target[i] =
-        standup_start_pos_[i] * (1.0f - alpha) + STANDUP_TARGET_POS[i] * alpha;
+      standup_start_pos_[i] * (1.0f - alpha) + standup_target_pos_[i] * alpha;
   }
 
   return target;

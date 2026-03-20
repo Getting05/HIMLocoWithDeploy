@@ -13,7 +13,8 @@
 
 namespace deploy {
 
-KeyboardController::KeyboardController()
+KeyboardController::KeyboardController(const RobotRuntimeConfig& config)
+    : config_(config)
 {
     fd_ = STDIN_FILENO;
 
@@ -75,22 +76,22 @@ void KeyboardController::process_key(char key)
     switch (key) {
     // ---- Velocity commands ----
     case 'w': case 'W':
-        vx_ = std::min(vx_ + CMD_VX_STEP, CMD_VX_MAX);
+        vx_ = std::min(vx_ + config_.cmd_vx_step, config_.cmd_vx_max);
         break;
     case 's': case 'S':
-        vx_ = std::max(vx_ - CMD_VX_STEP, CMD_VX_MIN);
+        vx_ = std::max(vx_ - config_.cmd_vx_step, config_.cmd_vx_min);
         break;
     case 'q': case 'Q':
-        vy_ = std::min(vy_ + CMD_VY_STEP, CMD_VY_MAX);
+        vy_ = std::min(vy_ + config_.cmd_vy_step, config_.cmd_vy_max);
         break;
     case 'e': case 'E':
-        vy_ = std::max(vy_ - CMD_VY_STEP, CMD_VY_MIN);
+        vy_ = std::max(vy_ - config_.cmd_vy_step, config_.cmd_vy_min);
         break;
     case 'a': case 'A':
-        yaw_ = std::min(yaw_ + CMD_YAW_STEP, CMD_YAW_MAX);
+        yaw_ = std::min(yaw_ + config_.cmd_yaw_step, config_.cmd_yaw_max);
         break;
     case 'd': case 'D':
-        yaw_ = std::max(yaw_ - CMD_YAW_STEP, CMD_YAW_MIN);
+        yaw_ = std::max(yaw_ - config_.cmd_yaw_step, config_.cmd_yaw_min);
         break;
 
     // ---- State transitions ----

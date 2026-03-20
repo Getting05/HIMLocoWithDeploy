@@ -11,6 +11,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # LibTorch (PyTorch C++ API)
 # Set Torch_DIR if not found automatically:
@@ -41,6 +42,7 @@ include_directories(
 # ========================== Sources ==========================
 
 set(SOURCES
+    src/robot_runtime_config.cpp
     src/motor_driver.cpp
     src/imu_subscriber.cpp
     src/policy_runner.cpp
@@ -63,6 +65,7 @@ add_executable(deploy_node ${SOURCES})
 target_link_libraries(deploy_node
     ${UNITREE_SDK_LIB}
     ${TORCH_LIBRARIES}
+    yaml-cpp
 )
 
 ament_target_dependencies(deploy_node
@@ -73,6 +76,7 @@ ament_target_dependencies(deploy_node
 
 # Motor debug node (standalone, with RViz visualization)
 add_executable(motor_debug_node
+    src/robot_runtime_config.cpp
     src/motor_driver.cpp
     src/robot_visualizer.cpp
     src/motor_debug_node.cpp
@@ -80,6 +84,7 @@ add_executable(motor_debug_node
 
 target_link_libraries(motor_debug_node
     ${UNITREE_SDK_LIB}
+    yaml-cpp
 )
 
 ament_target_dependencies(motor_debug_node

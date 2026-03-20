@@ -12,8 +12,8 @@
 namespace deploy {
 
 PolicyRunner::PolicyRunner(const std::string &policy_path,
-                           const std::string &device)
-    : device_(device) {
+                           const RobotRuntimeConfig &config)
+    : device_(config.device), config_(config) {
   std::cout << "[PolicyRunner] Loading policy from " << policy_path
             << std::endl;
 
@@ -26,7 +26,8 @@ PolicyRunner::PolicyRunner(const std::string &policy_path,
     throw;
   }
 
-  std::cout << "[PolicyRunner] Loaded JIT model on " << device << std::endl;
+  std::cout << "[PolicyRunner] Loaded JIT model on " << config.device
+            << std::endl;
 
   // Initialize buffers
   obs_history_ = torch::zeros(
@@ -36,19 +37,34 @@ PolicyRunner::PolicyRunner(const std::string &policy_path,
       {1, NUM_ACTIONS},
       torch::TensorOptions().dtype(torch::kFloat32).device(device_));
 
-  // Constant tensors
-  auto opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
-
   default_dof_pos_ =
-      torch::from_blob(const_cast<float *>(POLICY_DOF_POS.data()),
+      torch::from_blob(const_cast<float *>(config_.policy_dof_pos.data()),
                        {1, NUM_JOINTS}, torch::kFloat32)
           .clone()
           .to(device_);
 
-  commands_scale_ = torch::from_blob(const_cast<float *>(COMMANDS_SCALE.data()),
-                                     {1, 3}, torch::kFloat32)
-                        .clone()
-                        .to(device_);
+    std::array<float, 3> command_scale = {
+      config_.lin_vel_scale, config_.lin_vel_scale, config_.ang_vel_scale};
+    commands_scale_ =
+      torch::from_blob(command_scale.data(), {1, 3}, torch::kFloat32)
+        .clone()
+        .to(device_);
+
+    dof_pos_scale_ =
+      torch::from_blob(const_cast<float *>(config_.dof_pos_scale.data()),
+               {1, NUM_JOINTS}, torch::kFloat32)
+        .clone()
+        .to(device_);
+    dof_vel_scale_ =
+      torch::from_blob(const_cast<float *>(config_.dof_vel_scale.data()),
+               {1, NUM_JOINTS}, torch::kFloat32)
+        .clone()
+        .to(device_);
+    action_scale_ =
+      torch::from_blob(const_cast<float *>(config_.action_scale.data()),
+               {1, NUM_JOINTS}, torch::kFloat32)
+        .clone()
+        .to(device_);
 }
 
 void PolicyRunner::reset() {
@@ -67,7 +83,7 @@ PolicyRunner::compute_obs(const std::array<float, 3> &commands,
   // Apply command deadband
   std::array<float, 3> cmd = commands;
   float cmd_norm = std::sqrt(cmd[0] * cmd[0] + cmd[1] * cmd[1]);
-  if (cmd_norm < CMD_DEADBAND) {
+  if (cmd_norm < config_.cmd_deadband) {
     cmd[0] = 0.0f;
     cmd[1] = 0.0f;
   }
@@ -95,12 +111,12 @@ PolicyRunner::compute_obs(const std::array<float, 3> &commands,
   // Build observation: exactly reproduces compute_observations()
   auto current_obs = torch::cat(
       {
-          t_cmd * commands_scale_,                       // (1, 3)
-          t_angvel * ANG_VEL_SCALE,                      // (1, 3)
-          t_gravity,                                     // (1, 3)
-          (t_dofpos - default_dof_pos_) * DOF_POS_SCALE, // (1, 12)
-          t_dofvel * DOF_VEL_SCALE,                      // (1, 12)
-          last_actions_,                                 // (1, 12)
+        t_cmd * commands_scale_,                    // (1, 3)
+        t_angvel * config_.ang_vel_scale,           // (1, 3)
+        t_gravity,                                  // (1, 3)
+        (t_dofpos - default_dof_pos_) * dof_pos_scale_, // (1, 12)
+        t_dofvel * dof_vel_scale_,                  // (1, 12)
+        last_actions_,                              // (1, 12)
       },
       /*dim=*/1); // (1, 45)
 
@@ -120,7 +136,7 @@ void PolicyRunner::update_obs_history(const torch::Tensor &current_obs) {
       /*dim=*/1);
 
   // Clip
-  obs_history_ = torch::clamp(obs_history_, -CLIP_OBS, CLIP_OBS);
+  obs_history_ = torch::clamp(obs_history_, -config_.clip_obs, config_.clip_obs);
 }
 
 std::array<float, NUM_ACTIONS> PolicyRunner::infer() {
@@ -130,7 +146,7 @@ std::array<float, NUM_ACTIONS> PolicyRunner::infer() {
   inputs.push_back(obs_history_);
 
   auto output = model_.forward(inputs).toTensor(); // (1, 12)
-  output = torch::clamp(output, -CLIP_ACTIONS, CLIP_ACTIONS);
+  output = torch::clamp(output, -config_.clip_actions, config_.clip_actions);
 
   last_actions_ = output.clone();
 
@@ -162,17 +178,18 @@ std::array<float, NUM_JOINTS> PolicyRunner::get_target_dof_pos(
   std::array<float, NUM_JOINTS> target;
 
   for (int i = 0; i < NUM_JOINTS; ++i) {
-    float scaled = actions[i] * ACTION_SCALE;
+    float scaled = actions[i] * config_.action_scale[i];
     // Apply hip reduction
     for (int h : HIP_INDICES) {
       if (i == h) {
-        scaled *= HIP_REDUCTION;
+        scaled *= config_.hip_reduction;
         break;
       }
     }
-    target[i] = POLICY_DOF_POS[i] + scaled;
+    target[i] = config_.policy_dof_pos[i] + scaled;
     // Clamp to joint limits
-    target[i] = std::clamp(target[i], JOINT_POS_LOWER[i], JOINT_POS_UPPER[i]);
+    target[i] = std::clamp(target[i], config_.joint_pos_lower[i],
+                           config_.joint_pos_upper[i]);
   }
 
   return target;

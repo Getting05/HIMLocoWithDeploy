@@ -34,6 +34,7 @@
 #include <optional>
 #include <termios.h>
 
+#include "robot_runtime_config.h"
 #include "state_machine.h"
 #include "robot_config.h"
 
@@ -47,7 +48,7 @@ struct StateRequest {
 
 class KeyboardController {
 public:
-    KeyboardController();
+    explicit KeyboardController(const RobotRuntimeConfig& config);
     ~KeyboardController();
 
     // Non-copyable
@@ -105,6 +106,7 @@ private:
     int fd_;
     struct termios old_settings_;
     bool terminal_saved_ = false;
+    RobotRuntimeConfig config_;
 };
 
 }  // namespace deploy

@@ -22,6 +22,7 @@
 #include <torch/torch.h>
 
 #include "robot_config.h"
+#include "robot_runtime_config.h"
 
 namespace deploy {
 
@@ -32,7 +33,7 @@ public:
      * @param policy_path Path to JIT-exported policy.pt file
      * @param device Torch device string, e.g. "cuda:0" or "cpu"
      */
-    PolicyRunner(const std::string& policy_path, const std::string& device = "cuda:0");
+    PolicyRunner(const std::string& policy_path, const RobotRuntimeConfig& config);
 
     /// Reset observation history and last actions (call when entering RL state).
     void reset();
@@ -65,7 +66,7 @@ public:
      * Reproduces: target = default_dof_pos + actions * action_scale * hip_reduction
      * Clamps to joint limits.
      */
-    static std::array<float, NUM_JOINTS> get_target_dof_pos(
+    std::array<float, NUM_JOINTS> get_target_dof_pos(
         const std::array<float, NUM_ACTIONS>& actions);
 
     /**
@@ -84,12 +85,16 @@ public:
 private:
     torch::jit::script::Module model_;
     torch::Device device_;
+    RobotRuntimeConfig config_;
 
     // Buffers on device
     torch::Tensor obs_history_;    // (1, 270)
     torch::Tensor last_actions_;   // (1, 12)
     torch::Tensor default_dof_pos_; // (1, 12)
     torch::Tensor commands_scale_;  // (1, 3)
+    torch::Tensor dof_pos_scale_;   // (1, 12)
+    torch::Tensor dof_vel_scale_;   // (1, 12)
+    torch::Tensor action_scale_;    // (1, 12)
 };
 
 }  // namespace deploy

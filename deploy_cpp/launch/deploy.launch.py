@@ -1,5 +1,8 @@
 """Launch file for deploy_cpp deploy_node."""
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
@@ -7,19 +10,18 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
+    pkg_dir = get_package_share_directory('deploy_cpp')
+    default_cfg = os.path.join(pkg_dir, 'config', 'robots', 'mybot.yaml')
+
     return LaunchDescription([
-        DeclareLaunchArgument('policy_path', default_value='policy/policy.pt',
-                              description='Path to JIT policy model'),
-        DeclareLaunchArgument('device', default_value='cuda:0',
-                              description='Torch device (cuda:0 or cpu)'),
-        DeclareLaunchArgument('port0', default_value='/dev/ttyUSB0',
-                              description='Serial port for front legs'),
-        DeclareLaunchArgument('port1', default_value='/dev/ttyUSB1',
-                              description='Serial port for rear legs'),
+        DeclareLaunchArgument('robot_config_file', default_value=default_cfg,
+                              description='Path to robot runtime yaml config'),
         DeclareLaunchArgument('debug_no_motor', default_value='false',
                               description='Use fake motor driver for testing'),
-        DeclareLaunchArgument('imu_topic', default_value='/livox/imu',
-                              description='IMU topic name'),
+        DeclareLaunchArgument('sim_mode', default_value='false',
+                              description='Use MuJoCo bridge topic motor driver'),
+        DeclareLaunchArgument('sim_pingpong_mode', default_value='false',
+                              description='Enable state-triggered ping-pong control timing in deploy_node'),
 
         Node(
             package='deploy_cpp',
@@ -27,12 +29,10 @@ def generate_launch_description():
             name='deploy_node',
             output='screen',
             parameters=[{
-                'policy_path': LaunchConfiguration('policy_path'),
-                'device': LaunchConfiguration('device'),
-                'port0': LaunchConfiguration('port0'),
-                'port1': LaunchConfiguration('port1'),
+                'robot_config_file': LaunchConfiguration('robot_config_file'),
                 'debug_no_motor': LaunchConfiguration('debug_no_motor'),
-                'imu_topic': LaunchConfiguration('imu_topic'),
+                'sim_mode': LaunchConfiguration('sim_mode'),
+                'sim_pingpong_mode': LaunchConfiguration('sim_pingpong_mode'),
             }],
         ),
     ])

@@ -35,6 +35,7 @@
 #include "motor_driver.h"
 #include "policy_runner.h"
 #include "robot_config.h"
+#include "robot_runtime_config.h"
 #include "robot_visualizer.h"
 #include "state_machine.h"
 
@@ -75,39 +76,42 @@ static constexpr const char *BANNER = R"(
 
 class FakeMotorDriver {
 public:
-  FakeMotorDriver() {
-    dof_pos_.fill(0.0f);
+  explicit FakeMotorDriver(const RobotRuntimeConfig &config) : config_(config) {
+    dof_pos_ = config_.default_dof_pos;
     dof_vel_.fill(0.0f);
   }
 
-  void send_commands(const std::array<float, NUM_JOINTS> &target_dof_pos,
-                     float kp = KP_MOTOR, float kd = KD_MOTOR) {
-    constexpr float dt = CONTROL_DT;
+  void send_commands(const std::array<float, NUM_JOINTS> &target_dof_pos, float kp,
+                     float kd) {
+    const float dt = config_.control_dt;
     for (int i = 0; i < NUM_JOINTS; ++i) {
       float pos_err = target_dof_pos[i] - dof_pos_[i];
       float acc = std::clamp(kp * pos_err - kd * dof_vel_[i], -20.0f, 20.0f);
       dof_vel_[i] = (dof_vel_[i] + acc * dt) * 0.98f;
       dof_pos_[i] = std::clamp(dof_pos_[i] + dof_vel_[i] * dt,
-                               JOINT_POS_LOWER[i], JOINT_POS_UPPER[i]);
+                               config_.joint_pos_lower[i],
+                               config_.joint_pos_upper[i]);
     }
   }
 
-  void send_damping(float kd = KD_DAMP_MOTOR) {
-    constexpr float dt = CONTROL_DT;
+  void send_damping(float kd) {
+    const float dt = config_.control_dt;
     float damping = std::clamp(kd * 0.6f, 0.0f, 0.9f);
     for (int i = 0; i < NUM_JOINTS; ++i) {
       dof_vel_[i] *= (1.0f - damping);
       dof_pos_[i] = std::clamp(dof_pos_[i] + dof_vel_[i] * dt,
-                               JOINT_POS_LOWER[i], JOINT_POS_UPPER[i]);
+                               config_.joint_pos_lower[i],
+                               config_.joint_pos_upper[i]);
     }
   }
 
   void set_zero_torque() {
-    constexpr float dt = CONTROL_DT;
+    const float dt = config_.control_dt;
     for (int i = 0; i < NUM_JOINTS; ++i) {
       dof_vel_[i] *= 0.98f;
       dof_pos_[i] = std::clamp(dof_pos_[i] + dof_vel_[i] * dt,
-                               JOINT_POS_LOWER[i], JOINT_POS_UPPER[i]);
+                               config_.joint_pos_lower[i],
+                               config_.joint_pos_upper[i]);
     }
   }
 
@@ -117,6 +121,7 @@ public:
   const std::array<float, NUM_JOINTS> &dof_vel() const { return dof_vel_; }
 
 private:
+  RobotRuntimeConfig config_;
   std::array<float, NUM_JOINTS> dof_pos_;
   std::array<float, NUM_JOINTS> dof_vel_;
 };
@@ -127,8 +132,9 @@ private:
 
 class MujocoMotorDriver {
 public:
-  MujocoMotorDriver(rclcpp::Node *node) {
-    dof_pos_ = DEFAULT_DOF_POS;
+  MujocoMotorDriver(rclcpp::Node *node, const RobotRuntimeConfig &config)
+      : config_(config) {
+    dof_pos_ = config_.default_dof_pos;
     dof_vel_.fill(0.0f);
 
     // Low-latency QoS for real-time control: BEST_EFFORT, depth=1, VOLATILE
@@ -158,20 +164,20 @@ public:
         "MujocoMotorDriver: pub=/mujoco/joint_cmd, sub=/mujoco/joint_state");
   }
 
-  void send_commands(const std::array<float, NUM_JOINTS> &target_dof_pos,
-                     float kp = KP_MOTOR, float kd = KD_MOTOR) {
+  void send_commands(const std::array<float, NUM_JOINTS> &target_dof_pos, float kp,
+                     float kd) {
     std_msgs::msg::Float32MultiArray msg;
     msg.data.resize(NUM_JOINTS + 2);
     for (int i = 0; i < NUM_JOINTS; ++i) {
       msg.data[i] = target_dof_pos[i];
     }
-    // Send joint-side PD gains (convert back from motor-side)
-    msg.data[NUM_JOINTS] = kp * GEAR_RATIO * GEAR_RATIO;
-    msg.data[NUM_JOINTS + 1] = kd * GEAR_RATIO * GEAR_RATIO;
+    // Receive/send gains in joint space for sim parity.
+    msg.data[NUM_JOINTS] = kp;
+    msg.data[NUM_JOINTS + 1] = kd;
     pub_->publish(msg);
   }
 
-  void send_damping(float kd = KD_DAMP_MOTOR) {
+  void send_damping(float kd) {
     // Send current position as target with only kd
     std_msgs::msg::Float32MultiArray msg;
     msg.data.resize(NUM_JOINTS + 2);
@@ -179,7 +185,7 @@ public:
       msg.data[i] = dof_pos_[i];
     }
     msg.data[NUM_JOINTS] = 0.0f; // kp = 0
-    msg.data[NUM_JOINTS + 1] = kd * GEAR_RATIO * GEAR_RATIO;
+    msg.data[NUM_JOINTS + 1] = kd;
     pub_->publish(msg);
   }
 
@@ -202,6 +208,7 @@ public:
   const std::array<float, NUM_JOINTS> &dof_vel() const { return dof_vel_; }
 
 private:
+  RobotRuntimeConfig config_;
   std::array<float, NUM_JOINTS> dof_pos_;
   std::array<float, NUM_JOINTS> dof_vel_;
   std::atomic<uint64_t> msg_count_{0};
@@ -217,35 +224,35 @@ class DeployNode : public rclcpp::Node {
 public:
   DeployNode() : Node("deploy_node") {
     // Declare parameters
-    this->declare_parameter<std::string>("policy_path", "policy/policy.pt");
-    this->declare_parameter<std::string>("device", "cuda:0");
-    this->declare_parameter<std::string>("port0", "/dev/ttyUSB0");
-    this->declare_parameter<std::string>("port1", "/dev/ttyUSB1");
+    this->declare_parameter<std::string>("robot_config_file", "");
     this->declare_parameter<bool>("debug_no_motor", false);
     this->declare_parameter<bool>("sim_mode", false);
     this->declare_parameter<bool>("sim_pingpong_mode", false);
-    this->declare_parameter<std::string>("imu_topic", "/fast_livo2/state6_imu_prop");
   }
 
   void initialize() {
-    auto policy_path = this->get_parameter("policy_path").as_string();
-    auto device = this->get_parameter("device").as_string();
-    auto port0 = this->get_parameter("port0").as_string();
-    auto port1 = this->get_parameter("port1").as_string();
+    auto config_file = this->get_parameter("robot_config_file").as_string();
+    if (config_file.empty()) {
+      throw std::runtime_error("robot_config_file is required");
+    }
+    config_ = load_robot_runtime_config(config_file);
+    build_dof_permutation();
+
     debug_no_motor_ = this->get_parameter("debug_no_motor").as_bool();
     sim_mode_ = this->get_parameter("sim_mode").as_bool();
     sim_pingpong_mode_ = this->get_parameter("sim_pingpong_mode").as_bool();
-    auto imu_topic = this->get_parameter("imu_topic").as_string();
+    last_safe_target_ = config_.standup_target_pos;
+    sweep_last_sent_ = config_.standup_target_pos;
 
     std::cout << BANNER << std::endl;
 
     // ---- State subscriber (ang_vel + projected_gravity from fast_livo2) ----
-    imu_ = std::make_shared<IMUSubscriber>(imu_topic);
+    imu_ = std::make_shared<IMUSubscriber>(config_.imu_topic);
     RCLCPP_INFO(this->get_logger(), "IMU subscriber initialized");
 
     // ---- Motor driver ----
     if (sim_mode_) {
-      mujoco_motor_ = std::make_unique<MujocoMotorDriver>(this);
+      mujoco_motor_ = std::make_unique<MujocoMotorDriver>(this, config_);
       RCLCPP_INFO(this->get_logger(),
                   "SIM: Using MuJoCo motor driver (ROS2 topics)");
       if (sim_pingpong_mode_) {
@@ -253,23 +260,23 @@ public:
                     "SIM ping-pong mode enabled: state-triggered control (no wall-clock control sleep)");
       }
     } else if (!debug_no_motor_) {
-      motor_ = std::make_unique<MotorDriver>(port0, port1);
+      motor_ = std::make_unique<MotorDriver>(config_, config_.port0, config_.port1);
       RCLCPP_INFO(this->get_logger(), "Motor driver initialized");
     } else {
-      fake_motor_ = std::make_unique<FakeMotorDriver>();
+      fake_motor_ = std::make_unique<FakeMotorDriver>(config_);
       RCLCPP_INFO(this->get_logger(), "DEBUG: Using fake motor driver");
     }
 
     // ---- Policy runner ----
-    policy_ = std::make_unique<PolicyRunner>(policy_path, device);
+    policy_ = std::make_unique<PolicyRunner>(config_.policy_path, config_);
     RCLCPP_INFO(this->get_logger(), "Policy runner initialized");
 
     // ---- Keyboard controller ----
-    keyboard_ = std::make_unique<KeyboardController>();
+    keyboard_ = std::make_unique<KeyboardController>(config_);
     RCLCPP_INFO(this->get_logger(), "Keyboard controller initialized");
 
     // ---- State machine ----
-    sm_ = std::make_unique<StateMachine>();
+    sm_ = std::make_unique<StateMachine>(config_);
     RCLCPP_INFO(this->get_logger(), "State machine initialized (IDLE)");
 
     // ---- RViz visualizer ----
@@ -280,7 +287,7 @@ public:
   }
 
   void run() {
-    rclcpp::Rate rate(1.0 / CONTROL_DT); // 50 Hz
+    rclcpp::Rate rate(1.0 / config_.control_dt);
     uint64_t loop_count = 0;
     uint64_t last_joint_msg_count = 0;
     uint64_t last_imu_msg_count = 0;
@@ -361,6 +368,65 @@ public:
   }
 
 private:
+  void build_dof_permutation() {
+    auto find_driver_idx_by_motor_id = [](int motor_id) -> int {
+      for (int i = 0; i < NUM_JOINTS; ++i) {
+        if (MOTOR_MAP[i].motor_id == motor_id) {
+          return i;
+        }
+      }
+      return -1;
+    };
+
+    policy_to_driver_idx_.fill(-1);
+    driver_to_policy_idx_.fill(-1);
+
+    for (int p = 0; p < NUM_JOINTS; ++p) {
+      int raw = config_.joint_mapping[p];
+      int driver_idx = -1;
+
+      // Preferred: treat YAML mapping as motor IDs.
+      driver_idx = find_driver_idx_by_motor_id(raw);
+
+      // Fallback: allow direct 0-based driver index mapping.
+      if (driver_idx < 0 && raw >= 0 && raw < NUM_JOINTS) {
+        driver_idx = raw;
+      }
+
+      if (driver_idx < 0 || driver_idx >= NUM_JOINTS) {
+        throw std::runtime_error("Invalid joint_mapping entry at policy index " +
+                                 std::to_string(p) + ": " +
+                                 std::to_string(raw));
+      }
+
+      if (driver_to_policy_idx_[driver_idx] != -1) {
+        throw std::runtime_error("joint_mapping is not one-to-one, repeated mapping at driver index " +
+                                 std::to_string(driver_idx));
+      }
+
+      policy_to_driver_idx_[p] = driver_idx;
+      driver_to_policy_idx_[driver_idx] = p;
+    }
+  }
+
+  std::array<float, NUM_JOINTS>
+  reorder_driver_to_policy(const std::array<float, NUM_JOINTS> &driver_vals) const {
+    std::array<float, NUM_JOINTS> policy_vals{};
+    for (int d = 0; d < NUM_JOINTS; ++d) {
+      policy_vals[driver_to_policy_idx_[d]] = driver_vals[d];
+    }
+    return policy_vals;
+  }
+
+  std::array<float, NUM_JOINTS>
+  reorder_policy_to_driver(const std::array<float, NUM_JOINTS> &policy_vals) const {
+    std::array<float, NUM_JOINTS> driver_vals{};
+    for (int p = 0; p < NUM_JOINTS; ++p) {
+      driver_vals[policy_to_driver_idx_[p]] = policy_vals[p];
+    }
+    return driver_vals;
+  }
+
   // ------------------------------------------------------------------ //
   //  State request handler                                              //
   // ------------------------------------------------------------------ //
@@ -382,7 +448,7 @@ private:
         if (req.target == RobotState::SINGLE_STEP_RL) {
           single_step_count_ = 0;
           single_step_pending_ = false;
-          last_safe_target_ = STANDUP_TARGET_POS;
+          last_safe_target_ = config_.standup_target_pos;
         }
       }
       // On entering JointSweep, reset sweep state
@@ -414,11 +480,11 @@ private:
     auto target = sm_->get_standup_target(cur_pos);
 
     if (motor_) {
-      motor_->send_commands(target, KP_MOTOR, KD_MOTOR);
+      motor_->send_commands(target, config_.kp_joint, config_.kd_joint);
     } else if (mujoco_motor_) {
-      mujoco_motor_->send_commands(target, KP_MOTOR, KD_MOTOR);
+      mujoco_motor_->send_commands(target, config_.kp_joint, config_.kd_joint);
     } else if (fake_motor_) {
-      fake_motor_->send_commands(target, KP_MOTOR, KD_MOTOR);
+      fake_motor_->send_commands(target, config_.kp_joint, config_.kd_joint);
     }
 
     if (sm_->standup_complete()) {
@@ -435,15 +501,18 @@ private:
     // Gather sensor data
     auto ang_vel = imu_->get_ang_vel();
     auto projected_gravity = imu_->get_projected_gravity();
-    const auto &dof_pos = get_dof_pos();
-    const auto &dof_vel = get_dof_vel();
+    const auto &dof_pos_driver = get_dof_pos();
+    const auto &dof_vel_driver = get_dof_vel();
+    auto dof_pos_policy = reorder_driver_to_policy(dof_pos_driver);
+    auto dof_vel_policy = reorder_driver_to_policy(dof_vel_driver);
     auto commands = keyboard_->get_commands();
 
     // Run policy inference
-    std::array<float, NUM_JOINTS> target_dof_pos;
+    std::array<float, NUM_JOINTS> target_dof_pos_policy;
     std::array<float, NUM_ACTIONS> actions;
-    policy_->step(commands, ang_vel, projected_gravity, dof_pos, dof_vel,
-                  target_dof_pos, actions);
+    policy_->step(commands, ang_vel, projected_gravity, dof_pos_policy,
+            dof_vel_policy, target_dof_pos_policy, actions);
+    auto target_dof_pos_driver = reorder_policy_to_driver(target_dof_pos_policy);
     // test
     //     target_dof_pos = {
     //     -0.39f, 0.77f, -1.50f,
@@ -454,21 +523,24 @@ private:
 
     // Send to motors
     if (motor_) {
-      motor_->send_commands(target_dof_pos, KP_MOTOR, KD_MOTOR);
+      motor_->send_commands(target_dof_pos_driver, config_.kp_joint,
+                            config_.kd_joint);
     } else if (mujoco_motor_) {
-      mujoco_motor_->send_commands(target_dof_pos, KP_MOTOR, KD_MOTOR);
+      mujoco_motor_->send_commands(target_dof_pos_driver, config_.kp_joint,
+                                   config_.kd_joint);
     } else if (fake_motor_) {
-      fake_motor_->send_commands(target_dof_pos, KP_MOTOR, KD_MOTOR);
+      fake_motor_->send_commands(target_dof_pos_driver, config_.kp_joint,
+                                 config_.kd_joint);
     }
   }
 
   void handle_joint_damping() {
     if (motor_) {
-      motor_->send_damping(KD_DAMP_MOTOR);
+      motor_->send_damping(config_.kd_damp_motor);
     } else if (mujoco_motor_) {
-      mujoco_motor_->send_damping(KD_DAMP_MOTOR);
+      mujoco_motor_->send_damping(config_.kd_damp_motor);
     } else if (fake_motor_) {
-      fake_motor_->send_damping(KD_DAMP_MOTOR);
+      fake_motor_->send_damping(config_.kd_damp_motor);
     }
   }
 
@@ -481,9 +553,10 @@ private:
     float offset = keyboard_->get_sweep_offset();
 
     // Build target: standup pose + offset on selected joint only
-    std::array<float, NUM_JOINTS> target = STANDUP_TARGET_POS;
-    target[idx] = std::clamp(STANDUP_TARGET_POS[idx] + offset,
-                             JOINT_POS_LOWER[idx], JOINT_POS_UPPER[idx]);
+    std::array<float, NUM_JOINTS> target = config_.standup_target_pos;
+    target[idx] = std::clamp(config_.standup_target_pos[idx] + offset,
+                 config_.joint_pos_lower[idx],
+                 config_.joint_pos_upper[idx]);
 
     // Print status (throttled to ~2 Hz to avoid flood)
     static auto last_print = std::chrono::steady_clock::now();
@@ -497,7 +570,7 @@ private:
                 << "  reversed=" << (MOTOR_MAP[idx].is_reversed ? "YES" : "NO")
                 << std::endl;
       std::cout << "  STANDUP_POS = " << std::fixed << std::setprecision(3)
-                << STANDUP_TARGET_POS[idx] << "  offset = " << std::showpos
+                << config_.standup_target_pos[idx] << "  offset = " << std::showpos
                 << offset << std::noshowpos << "  target = " << target[idx]
                 << std::endl;
       const auto &cur_pos = get_dof_pos();
@@ -513,15 +586,16 @@ private:
       std::cout << "\n\033[1;32m>>> SENDING\033[0m target[" << idx
                 << "] = " << target[idx] << " to " << JOINT_NAMES[idx]
                 << std::endl;
-      send_to_motors(target, KP_MOTOR, KD_MOTOR);
+      send_to_motors(target, config_.kp_joint, config_.kd_joint);
       sweep_last_sent_ = target;
       sweep_has_sent_ = true;
     } else {
       // Hold previous sent position (or standup pose if nothing sent yet)
       if (sweep_has_sent_) {
-        send_to_motors(sweep_last_sent_, KP_MOTOR, KD_MOTOR);
+        send_to_motors(sweep_last_sent_, config_.kp_joint, config_.kd_joint);
       } else {
-        send_to_motors(STANDUP_TARGET_POS, KP_MOTOR, KD_MOTOR);
+        send_to_motors(config_.standup_target_pos, config_.kp_joint,
+                       config_.kd_joint);
       }
     }
   }
@@ -533,13 +607,13 @@ private:
   void handle_single_step_rl() {
     // If a step result is pending confirmation, keep sending last safe target
     if (single_step_pending_) {
-      send_to_motors(last_safe_target_, KP_MOTOR, KD_MOTOR);
+      send_to_motors(last_safe_target_, config_.kp_joint, config_.kd_joint);
 
       // Check for Enter confirmation
       if (keyboard_->consume_step_confirm()) {
         std::cout << "\n\033[1;32m>>> EXECUTING step " << single_step_count_
                   << "\033[0m" << std::endl;
-        send_to_motors(pending_target_, KP_MOTOR, KD_MOTOR);
+        send_to_motors(pending_target_, config_.kp_joint, config_.kd_joint);
         last_safe_target_ = pending_target_;
         single_step_pending_ = false;
       }
@@ -549,14 +623,17 @@ private:
     // ---- Compute next step (but don't send yet) ----
     auto ang_vel = imu_->get_ang_vel();
     auto projected_gravity = imu_->get_projected_gravity();
-    const auto &dof_pos = get_dof_pos();
-    const auto &dof_vel = get_dof_vel();
+    const auto &dof_pos_driver = get_dof_pos();
+    const auto &dof_vel_driver = get_dof_vel();
+    auto dof_pos_policy = reorder_driver_to_policy(dof_pos_driver);
+    auto dof_vel_policy = reorder_driver_to_policy(dof_vel_driver);
     auto commands = keyboard_->get_commands();
 
-    std::array<float, NUM_JOINTS> target_dof_pos;
+    std::array<float, NUM_JOINTS> target_dof_pos_policy;
     std::array<float, NUM_ACTIONS> actions;
-    policy_->step(commands, ang_vel, projected_gravity, dof_pos, dof_vel,
-                  target_dof_pos, actions);
+    policy_->step(commands, ang_vel, projected_gravity, dof_pos_policy,
+            dof_vel_policy, target_dof_pos_policy, actions);
+    auto target_dof_pos_driver = reorder_policy_to_driver(target_dof_pos_policy);
 
     single_step_count_++;
 
@@ -584,25 +661,26 @@ private:
     for (int i = 0; i < NUM_JOINTS; ++i) {
       std::cout << std::left << std::setw(20) << JOINT_NAMES[i] << std::right
                 << std::fixed << std::setprecision(3) << std::setw(10)
-                << dof_pos[i] << std::setw(10) << dof_vel[i] << std::setw(10)
-                << actions[i] << std::setw(10) << target_dof_pos[i]
+                << dof_pos_policy[i] << std::setw(10) << dof_vel_policy[i]
+                << std::setw(10) << actions[i] << std::setw(10)
+                << target_dof_pos_policy[i]
                 << std::setw(10) << (MOTOR_MAP[i].is_reversed ? "YES" : "NO")
                 << std::setw(10) << MOTOR_MAP[i].motor_id << std::endl;
     }
 
     std::cout << std::string(80, '-') << std::endl;
-    std::cout << "PD gains: kp_motor=" << std::setprecision(4) << KP_MOTOR
-              << "  kd_motor=" << KD_MOTOR << "  (joint: kp=" << KP_JOINT
-              << " kd=" << KD_JOINT << ")" << std::endl;
+    std::cout << "PD gains (joint): kp=" << std::setprecision(4)
+          << config_.kp_joint << "  kd=" << config_.kd_joint
+          << std::endl;
     std::cout << "\n\033[1;33mPress ENTER to execute, Space to STOP\033[0m"
               << std::endl;
 
     // Store pending and wait
-    pending_target_ = target_dof_pos;
+    pending_target_ = target_dof_pos_driver;
     single_step_pending_ = true;
 
     // Keep holding current position
-    send_to_motors(last_safe_target_, KP_MOTOR, KD_MOTOR);
+    send_to_motors(last_safe_target_, config_.kp_joint, config_.kd_joint);
   }
 
   // ------------------------------------------------------------------ //
@@ -693,6 +771,9 @@ private:
   bool debug_no_motor_ = false;
   bool sim_mode_ = false;
   bool sim_pingpong_mode_ = false;
+  RobotRuntimeConfig config_ = default_robot_runtime_config();
+  std::array<int, NUM_JOINTS> policy_to_driver_idx_{};
+  std::array<int, NUM_JOINTS> driver_to_policy_idx_{};
 
   std::shared_ptr<IMUSubscriber> imu_;
   std::unique_ptr<MotorDriver> motor_;
@@ -704,14 +785,14 @@ private:
   std::unique_ptr<RobotVisualizer> visualizer_;
 
   // ---- JointSweep state ----
-  std::array<float, NUM_JOINTS> sweep_last_sent_ = STANDUP_TARGET_POS;
+  std::array<float, NUM_JOINTS> sweep_last_sent_{};
   bool sweep_has_sent_ = false;
 
   // ---- SingleStepRL state ----
   uint64_t single_step_count_ = 0;
   bool single_step_pending_ = false;
   std::array<float, NUM_JOINTS> pending_target_{};
-  std::array<float, NUM_JOINTS> last_safe_target_ = STANDUP_TARGET_POS;
+  std::array<float, NUM_JOINTS> last_safe_target_{};
 };
 
 } // namespace deploy

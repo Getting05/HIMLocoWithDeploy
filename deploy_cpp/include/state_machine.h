@@ -17,6 +17,7 @@
 #include <string>
 
 #include "robot_config.h"
+#include "robot_runtime_config.h"
 
 namespace deploy {
 
@@ -51,7 +52,7 @@ inline const char *robot_state_name(RobotState s) {
 
 class StateMachine {
 public:
-  StateMachine();
+  explicit StateMachine(const RobotRuntimeConfig &config);
 
   /// Current state.
   RobotState state() const { return state_; }
@@ -85,6 +86,8 @@ private:
   bool is_valid_transition(RobotState from, RobotState to) const;
 
   RobotState state_ = RobotState::IDLE;
+  std::array<float, NUM_JOINTS> standup_target_pos_ = STANDUP_TARGET_POS;
+  float standup_duration_ = STANDUP_DURATION;
 
   // StandUp interpolation state
   std::chrono::steady_clock::time_point standup_start_time_;

@@ -1,354 +1,291 @@
-# deploy_cpp — C++ 真机部署节点
+# deploy_cpp — C++ 真机/仿真部署节点
 
-基于 ROS2 Humble 的四足机器人 C++ 部署系统，使用 LibTorch 进行 HIM 策略推理，通过 Unitree GO-M8010-6 电机 SDK 控制 12 个关节。
+基于 ROS2 Humble 的四足机器人部署系统，使用 LibTorch 执行 HIM 策略推理，通过 Unitree GO-M8010-6 SDK 控制 12 个关节，并支持 MuJoCo 仿真闭环验证。
 
-## TODO List
+本版本已完成以下关键改造：
 
-- [] 计算重力投影时，后续采用FAST-LIVO2的输出，替代当前的基于四元数的计算方法，以提高在大倾角下的准确性和鲁棒性。
+- 运行时参数统一迁移到 YAML（强制配置文件启动）
+- 支持逐关节传动比 joint_transmission_ratio
+- 小腿额外 3:7 减速比已纳入控制下发与观测回读
+- 支持逐关节 dof_pos_scale、dof_vel_scale、action_scale
+- 支持多机器人配置切换（mybot / mybot_v2）
+- MuJoCo/URDF 模型路径由 YAML 选择，不再在代码中写死 mybot
+
+## TODO
+
+- [ ] 重力投影后续改为直接使用 FAST-LIVO2 输出，替代当前仿真中的四元数计算流程，以提升大倾角鲁棒性。
 
 ## 目录结构
 
-```
+```text
 deploy_cpp/
-├── CMakeLists.txt              # 构建配置
-├── package.xml                 # ROS2 包描述
+├── CMakeLists.txt
+├── package.xml
 ├── README.md
 ├── include/
-│   ├── robot_config.h          # 机器人配置常量
-│   ├── motor_driver.h          # 电机驱动封装
-│   ├── imu_subscriber.h        # ROS2 IMU 订阅器
-│   ├── policy_runner.h         # 策略推理 (LibTorch JIT)
-│   ├── keyboard_controller.h   # 键盘控制器
-│   ├── state_machine.h         # 状态机
-│   ├── robot_visualizer.h      # RViz 可视化 (JointState 发布)
-│   └── Unitree_Motor/          # Unitree 电机 SDK 头文件
+│   ├── robot_config.h              # 编译期常量与历史兼容常量
+│   ├── robot_runtime_config.h      # 运行时 YAML 配置结构
+│   ├── motor_driver.h
+│   ├── imu_subscriber.h
+│   ├── policy_runner.h
+│   ├── keyboard_controller.h
+│   ├── state_machine.h
+│   ├── robot_visualizer.h
+│   └── Unitree_Motor/
 ├── src/
-│   ├── deploy_node.cpp         # 主入口 + 50Hz 控制循环
+│   ├── robot_runtime_config.cpp    # YAML 加载与强校验
+│   ├── deploy_node.cpp
 │   ├── motor_driver.cpp
 │   ├── imu_subscriber.cpp
 │   ├── policy_runner.cpp
 │   ├── keyboard_controller.cpp
 │   ├── state_machine.cpp
-│   ├── robot_visualizer.cpp    # RViz JointState 发布实现
-│   └── motor_debug_node.cpp    # 电机调试节点 (独立)
+│   ├── robot_visualizer.cpp
+│   └── motor_debug_node.cpp
 ├── config/
-│   ├── mybot.rviz              # RViz2 配置文件
-│   ├── cyclonedds.xml          # CycloneDDS + SHM 零拷贝配置
-│   └── setup_cyclonedds.sh     # DDS 切换脚本 (source 后生效)
+│   ├── robots/
+│   │   ├── mybot.yaml
+│   │   └── mybot_v2.yaml
+│   ├── mybot.rviz
+│   ├── cyclonedds.xml
+│   └── setup_cyclonedds.sh
 ├── launch/
-│   ├── deploy.launch.py        # 主部署 launch 文件
-│   ├── visualize.launch.py     # RViz 可视化 launch 文件
-│   ├── motor_debug.launch.py   # 电机调试 launch 文件
-│   └── sim.launch.py           # MuJoCo 仿真模式 launch 文件
+│   ├── deploy.launch.py
+│   ├── sim.launch.py
+│   ├── visualize.launch.py
+│   └── motor_debug.launch.py
 ├── sim/
-│   ├── mujoco_sim_node.py      # MuJoCo 仿真 Python 节点
-│   └── requirements.txt        # Python 依赖
+│   ├── mujoco_sim_node.py
+│   └── requirements.txt
 ├── robot/
-│   └── mybot/
-│       ├── urdf/mybot.urdf     # 机器人 URDF 描述文件
-│       ├── meshes/             # STL/OBJ 模型文件
-│       └── xml/mybot.xml       # MuJoCo 模型
-├── policy/                     # 放置 policy.pt 文件
-└── lib/                        # Unitree 电机 SDK 动态库
+│   ├── mybot/
+│   └── mybot_v2/
+├── policy/
+└── lib/
 ```
 
 ## 依赖
 
-- **ROS2 Humble** (rclcpp, std_msgs, sensor_msgs)
-- **LibTorch** (PyTorch C++ API, ≥ 2.0)
-- **Unitree Actuator SDK** (GO-M8010-6 电机通信)
-- **robot_state_publisher** (URDF → TF 变换发布)
-- **joint_state_publisher** (关节状态发布, 可视化用)
-- **rviz2** (3D 可视化)
-- **CycloneDDS**（可选，推荐实机部署使用）
+- ROS2 Humble (rclcpp, std_msgs, sensor_msgs)
+- LibTorch (PyTorch C++ API)
+- Unitree Actuator SDK
+- yaml-cpp (C++ 读取 YAML)
+- PyYAML (Python 仿真节点读取 YAML)
+- robot_state_publisher / rviz2（可视化）
 
-### 安装 LibTorch
-
-```bash
-# 下载 LibTorch (CUDA 版)
-wget https://download.pytorch.org/libtorch/cu124/libtorch-cxx11-abi-shared-with-deps-2.5.1%2Bcu124.zip
-sudo unzip libtorch-*.zip -d /opt/
-
-# 或 CPU 版
-wget https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.5.1%2Bcpu.zip
-sudo unzip libtorch-*.zip -d /opt/
-```
-
-### 安装 ROS2 可视化依赖
+安装示例：
 
 ```bash
-sudo apt install ros-humble-robot-state-publisher \
-                 ros-humble-joint-state-publisher \
-                 ros-humble-joint-state-publisher-gui \
-                 ros-humble-rviz2
+sudo apt install ros-humble-robot-state-publisher ros-humble-rviz2
+sudo apt install libyaml-cpp-dev
 ```
 
-### 安装 CycloneDDS（可选，实机推荐）
-
-```bash
-sudo apt install ros-humble-rmw-cyclonedds-cpp
-```
-
-### 安装 MuJoCo 仿真环境（可选）
+MuJoCo Python 环境：
 
 ```bash
 conda create -n mujoco_sim python=3.10 -y
 conda activate mujoco_sim
-pip install mujoco numpy
+pip install mujoco numpy pyyaml
 ```
 
-## 通信优化 (QoS & DDS)
+## 配置机制（重点）
 
-### QoS 策略
+### 1. 强制 YAML 启动
 
-控制指令和传感器数据是时效性极强的数据，采用"宁可丢包，绝不延迟"的 QoS 策略：
+deploy_node 现在要求传入 robot_config_file；不再依赖旧的 policy_path/device/port0/port1 启动参数。
 
-| Topic | QoS | Reliability | Depth | Durability | 说明 |
-|-------|-----|-------------|-------|------------|------|
-| `/mujoco/joint_cmd` | 极速模式 | BEST_EFFORT | 1 | VOLATILE | 关节指令 (C++ → MuJoCo/电机) |
-| `/mujoco/joint_state` | 极速模式 | BEST_EFFORT | 1 | VOLATILE | 关节状态 (MuJoCo/电机 → C++) |
-| `/fast_livo2/state6` | 极速模式 | BEST_EFFORT | 1 | VOLATILE | IMU/姿态数据 (LIVO2 → C++) |
-| `/joint_states` | 标准模式 | RELIABLE | 10 | VOLATILE | RViz 可视化 (延迟不敏感) |
+必须字段示例（节选）：
 
-**为什么不用默认 RELIABLE？**
-- RELIABLE 使用类似 TCP 的握手确认和重传机制，网络抖动时会导致延迟积累
-- BEST_EFFORT 类似 UDP，直接发送不等待确认，适合高频实时控制
-- History Depth=1 确保队列中永远只保留最新一帧，旧数据直接丢弃
-
-### CycloneDDS + 共享内存 (SHM)
-
-默认的 FastRTPS 在进程间通信时仍走本地回环网络栈，存在微秒到毫秒级的序列化开销。当 C++ 和 Python 节点运行在同一台主机上时，可切换到 CycloneDDS 并开启共享内存（零拷贝），延迟可逼近微秒级。
-
-```bash
-# 在运行任何 ROS 2 节点之前 source 此脚本
-cd ~/humble/Quadruped/HIMLoco/deploy_cpp
-source config/setup_cyclonedds.sh
-
-#终端2  Iceoryx 要求系统中必须有一个后台守护进程（Daemon）在运行，这个进程的名字就叫 RouDi（Routing and Discovery）
-source /opt/ros/humble/setup.bash
-iox-roudi
-
-
-# 验证 DDS 已切换
-ros2 doctor --report | grep middleware
-# 应显示: rmw_cyclonedds_cpp
-
-# 验证 SHM 生效（启动节点后）
-ls /dev/shm/ | grep iox
+```yaml
+num_of_dofs: 12
+joint_transmission_ratio: [6.33, 6.33, 14.77, 6.33, 6.33, 14.77, 6.33, 6.33, 14.77, 6.33, 6.33, 14.77]
+policy_path: policy/policy.pt
+device: cuda:0
+port0: /dev/motor_front
+port1: /dev/motor_rear
+urdf_relpath: robot/mybot/urdf/mybot.urdf
+mujoco_xml_relpath: robot/mybot/xml/mybot.xml
 ```
 
-如需恢复默认 FastRTPS：
-```bash
-unset RMW_IMPLEMENTATION CYCLONEDDS_URI
-```
+### 2. 逐关节传动比含义
+
+统一定义：
+
+- q_motor = q_joint * ratio[i]
+- dq_motor = dq_joint * ratio[i]
+- tau_motor = tau_joint / ratio[i]
+- kp_motor = kp_joint / ratio[i]^2
+- kd_motor = kd_joint / ratio[i]^2
+
+其中 ratio[i] 来自 YAML 的 joint_transmission_ratio。
+
+当前默认约定：
+
+- 髋/大腿：6.33（保留原电机减速比）
+- 小腿：6.33 * 7/3 = 14.77（叠加额外 3:7 减速器后的总传动比）
+
+### 3. 控制链路语义
+
+- 策略输出目标角度是关节侧语义
+- 真实电机下发时按 joint_transmission_ratio 做 joint→motor 换算
+- SDK 回读编码器数据后按同一 ratio 做 motor→joint 还原
+- Policy 观测使用还原后的关节侧 dof_pos/dof_vel
+
+## 多机器人选择（mybot / mybot_v2）
+
+通过切换 robot_config_file 实现。
+
+- mybot 配置：config/robots/mybot.yaml
+- mybot_v2 配置：config/robots/mybot_v2.yaml
+
+mybot_v2 默认模型字段：
+
+- urdf_relpath: robot/mybot_v2/urdf/mybot_v2.urdf
+- mujoco_xml_relpath: robot/mybot_v2/xml/mybot_v2_for_mujoco.xml
+- isaac_xml_relpath: robot/mybot_v2/xml/mybot_v2_for_isaacgym.xml
+
+## 为什么同时有 XML 和 URDF
+
+- MuJoCo 物理仿真只使用 XML（mujoco_xml_relpath）
+- URDF 仅用于 robot_state_publisher + RViz 显示 TF/网格
+
+也就是说，URDF 不参与 MuJoCo 动力学计算。
 
 ## 构建
 
 ```bash
-# 进入工作空间
 cd ~/humble/Quadruped/HIMLoco
-
-# 设置 ROS2 环境
 source /opt/ros/humble/setup.bash
 
-# 构建 (指定 LibTorch 路径)
 colcon build --packages-select deploy_cpp \
   --cmake-args -DTorch_DIR=/opt/libtorch/share/cmake/Torch
 
-# 加载构建结果
 source install/setup.bash
 ```
 
 ## 运行
 
-### 准备 policy.pt
-
-在训练端导出 JIT 模型（在 `play.py` 中设置 `EXPORT_POLICY = True`），将生成的 `policy.pt` 复制到 `deploy_cpp/policy/` 目录。
-
-### 真机运行
+### A. 真机（推荐 launch）
 
 ```bash
-source install/setup.bash
+source /opt/ros/humble/setup.bash
+source ~/humble/Quadruped/HIMLoco/install/setup.bash
 
-# 方式 1: 直接运行
-ros2 run deploy_cpp deploy_node --ros-args \
-  -p policy_path:=/home/getting/humble/Quadruped/HIMLoco/deploy_cpp/policy/policy.pt \
-  -p device:=cuda:0 \
-  -p port0:=/dev/ttyUSB0 \
-  -p port1:=/dev/ttyUSB1
-
-# 方式 2: 使用 launch 文件
 ros2 launch deploy_cpp deploy.launch.py \
-  policy_path:=/home/getting/humble/Quadruped/HIMLoco/deploy_cpp/policy/policy.pt \
-  device:=cuda:0
+  robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot.yaml
 ```
 
-### Debug 模式（无电机）
+切换到 mybot_v2：
+
+```bash
+ros2 launch deploy_cpp deploy.launch.py \
+  robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot_v2.yaml
+```
+
+### B. 真机（直接 run）
 
 ```bash
 ros2 run deploy_cpp deploy_node --ros-args \
-  -p debug_no_motor:=true \
-  -p policy_path:=/home/getting/humble/Quadruped/HIMLoco/deploy_cpp/policy/policy.pt \
-  -p device:=cuda:0
+  -p robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot.yaml
 ```
 
-### RViz 可视化
-
-在 RViz 中实时同步显示机器人关节状态，可与 deploy_node 配合使用。
+### C. Debug 无电机
 
 ```bash
-# 方式 1: 单独查看默认站立姿态
-ros2 launch deploy_cpp visualize.launch.py
-
-# 方式 2: 配合 deploy_node 显示实时状态
-#   终端 1 — 启动 RViz（关闭内置关节发布器）
-ros2 launch deploy_cpp visualize.launch.py use_jsp:=false
-#   终端 2 — 启动控制节点
-ros2 launch deploy_cpp deploy.launch.py debug_no_motor:=true
+ros2 run deploy_cpp deploy_node --ros-args \
+  -p robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot_v2.yaml \
+  -p debug_no_motor:=true
 ```
 
-`visualize.launch.py` 参数：
+### D. MuJoCo 仿真（推荐）
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `use_jsp` | `true` | 启动 joint_state_publisher（配合 deploy_node 时设为 false） |
-| `use_gui` | `false` | 使用 GUI 滑块手动调节关节角度 |
-
-### MuJoCo 仿真模式
-
-使用 MuJoCo 物理引擎验证完整控制流程（状态机 + 策略推理 + PD 控制），无需实体电机。
-
-C++ deploy_node 通过 ROS2 话题 `/mujoco/joint_cmd` 和 `/mujoco/joint_state` 与 Python MuJoCo 仿真节点通信，控制逻辑与真机完全一致。
+终端 1（MuJoCo 节点）：
 
 ```bash
-# 终端 1 — 启动 MuJoCo 仿真（Python，需要 conda 环境）
 cd ~/humble/Quadruped/HIMLoco/deploy_cpp
 conda activate mujoco_sim
 source /opt/ros/humble/setup.bash
-python3 sim/mujoco_sim_node.py -p pingpong_mode:=true 
-
-# 终端 2 — 启动控制节点（注意：必须用 ros2 run，不能用 launch，否则键盘无响应）
-source /opt/ros/humble/setup.bash
-source ~/humble/Quadruped/HIMLoco/install/setup.bash
-ros2 run deploy_cpp deploy_node --ros-args \
-  -p sim_mode:=true \
-  -p policy_path:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/policy/policy.pt \
-  -p device:=cuda:0
-  -p pingpong_mode:=true  
-
-# 终端 3 — robot_state_publisher（可选，用于 RViz）：
-source /opt/ros/humble/setup.bash
-source ~/humble/Quadruped/HIMLoco/install/setup.bash
-ros2 launch deploy_cpp visualize.launch.py use_jsp:=false
+python3 sim/mujoco_sim_node.py \
+  --robot-config config/robots/mybot_v2.yaml
 ```
 
-> **注意**：仿真模式下必须用 `ros2 run` 直接运行 deploy_node，不能用 `ros2 launch`，否则键盘输入无法传递给进程。
-
-### 电机调试
-
-独立节点，不需要 IMU、策略或键盘。发送全零参数 (q=0, dq=0, kp=0, kd=0, tau=0) 给所有电机，仅读取并打印电机角度，同时在 RViz 中实时显示关节状态，用于验证各关节映射是否正确。
+终端 2（控制节点 + 可视化链路）：
 
 ```bash
-# 默认启动（电机调试 + RViz 可视化）
+source /opt/ros/humble/setup.bash
+source ~/humble/Quadruped/HIMLoco/install/setup.bash
+
+ros2 launch deploy_cpp sim.launch.py \
+  robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot.yaml
+```
+
+切换 mybot_v2：
+
+```bash
+python3 sim/mujoco_sim_node.py \
+  --robot-config config/robots/mybot_v2.yaml
+
+ros2 launch deploy_cpp sim.launch.py \
+  robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot_v2.yaml
+```
+
+### E. 电机调试节点
+
+```bash
 ros2 launch deploy_cpp motor_debug.launch.py
-
-# 指定串口
-ros2 launch deploy_cpp motor_debug.launch.py \
-  port0:=/dev/ttyUSB0 \
-  port1:=/dev/ttyUSB1
-
-# 仅终端输出，不启动 RViz
-ros2 launch deploy_cpp motor_debug.launch.py rviz:=false
-
-# 直接运行（无 RViz，需另行启动 visualize.launch.py）
-ros2 run deploy_cpp motor_debug_node --ros-args \
-  -p port0:=/dev/ttyUSB0 \
-  -p port1:=/dev/ttyUSB1 \
-  -p rate_hz:=10.0
 ```
 
-`motor_debug.launch.py` 参数：
+## launch 参数
 
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `port0` | `/dev/ttyUSB0` | 前腿串口 |
-| `port1` | `/dev/ttyUSB1` | 后腿串口 |
-| `rate_hz` | `10.0` | 读取频率 (Hz) |
-| `rviz` | `true` | 是否启动 RViz 可视化 |
+### deploy.launch.py
 
-输出示例：
-```
-Joint             Angle(rad)  Angle(deg)  Vel(rad/s)
-------------------------------------------------------
-FR_hip_joint      -0.0982     -5.6273     0.0012
-FR_thigh_joint     0.7856     45.0000     0.0000
-FR_calf_joint     -1.5012    -86.0048    -0.0003
-...
-```
+- robot_config_file: 机器人 YAML 路径（必需语义）
+- debug_no_motor: true/false
+- sim_mode: true/false
+- sim_pingpong_mode: true/false
 
-## 操作说明
+### sim.launch.py
 
-| 按键 | 功能 |
-|------|------|
-| `0` | 切换到 Idle（零力矩） |
-| `1` | 切换到 StandUp（缓慢站起，2秒） |
-| `2` | 切换到 RL（策略控制） |
-| `3` | 切换到 JointDamping（关节阻尼缓冲） |
-| `W/S` | 增减前进速度 vx（±0.1 m/s） |
-| `A/D` | 增减偏航角速度 yaw（±0.3 rad/s） |
-| `Q/E` | 增减侧移速度 vy（±0.1 m/s） |
-| `R` | 重置速度为零 |
-| `Space` | 紧急停止 → Idle |
-| `Esc` | 退出程序 |
+- robot_config_file: 机器人 YAML 路径
+- sim_pingpong_mode: true/false
 
-## 典型使用流程
+sim.launch.py 会从 YAML 中读取 urdf_relpath 并自动启动 robot_state_publisher。
 
-```
-启动 → IDLE（趴着）
-按 1 → STAND_UP（缓慢站起，2秒）
-按 2 → RL（策略运行，WASD 控制行走）
-按 3 → JOINT_DAMPING（减速停下）
-按 0 → IDLE（趴下）
-紧急：任何时候按 Space → IDLE
-```
+## 键盘控制
 
-## 状态转移图
+- 0: IDLE
+- 1: STAND_UP
+- 2: RL
+- 3: JOINT_DAMPING
+- W/S: vx 增减
+- Q/E: vy 增减
+- A/D: yaw 增减
+- R: 速度清零
+- Space: 急停回 IDLE
+- Esc: 退出
 
-```
-IDLE ──────→ STAND_UP (按 1)
-STAND_UP ──→ RL (按 2，站起完成后)
-STAND_UP ──→ JOINT_DAMPING (按 3)
-RL ────────→ JOINT_DAMPING (按 3)
-RL ────────→ STAND_UP (按 1)
-JOINT_DAMPING → IDLE (按 0)
-JOINT_DAMPING → STAND_UP (按 1)
-任何状态 ──→ IDLE (Space 紧急停止)
-```
+实际步长和速度范围由 YAML 中 cmd_vx_step/cmd_vy_step/cmd_yaw_step 与 cmd_*_min/max 决定。
 
-## 关键参数
+## QoS
 
-| 参数 | 值 | 来源 |
-|------|-----|------|
-| 控制频率 | 50 Hz (0.02s) | legged_robot_config |
-| PD 增益 (关节侧) | Kp=40, Kd=1 | mybot_config |
-| PD 增益 (电机侧) | kp≈0.999, kd≈0.025 | Kp/r², r=6.33 |
-| Action Scale | 0.25 | mybot_config |
-| 观测维度 | 45 × 6 = 270 | legged_robot_config |
-| 减速比 | 6.33 | GO-M8010-6 |
+| Topic | Reliability | Depth | Durability |
+|---|---|---|---|
+| /mujoco/joint_cmd | BEST_EFFORT | 1 | VOLATILE |
+| /mujoco/joint_state | BEST_EFFORT | 1 | VOLATILE |
+| /fast_livo2/state6 | BEST_EFFORT | 1 | VOLATILE |
+| /joint_states | RELIABLE | 10 | VOLATILE |
 
-## 电机映射
+## 当前关键实现摘要
 
-| DOF | 关节 | 电机ID | 串口 | 反向 |
-|-----|------|--------|------|------|
-| 0 | FR_hip | 1 | USB0 | ❌ |
-| 1 | FR_thigh | 2 | USB0 | ✅ |
-| 2 | FR_calf | 3 | USB0 | ✅ |
-| 3 | FL_hip | 4 | USB0 | ❌ |
-| 4 | FL_thigh | 5 | USB0 | ❌ |
-| 5 | FL_calf | 6 | USB0 | ❌ |
-| 6 | RR_hip | 10 | USB1 | ✅ |
-| 7 | RR_thigh | 11 | USB1 | ✅ |
-| 8 | RR_calf | 12 | USB1 | ✅ |
-| 9 | RL_hip | 7 | USB1 | ✅ |
-| 10 | RL_thigh | 8 | USB1 | ❌ |
-| 11 | RL_calf | 9 | USB1 | ❌ |
+- 运行时配置入口：robot_runtime_config.cpp
+- 逐关节传动比换算：motor_driver.cpp
+- 逐关节观测/动作 scale：policy_runner.cpp
+- standup 时长/目标改为 YAML：state_machine.cpp
+- 键盘速度范围改为 YAML：keyboard_controller.cpp
+- 模型路径按 YAML 选择：sim.launch.py + sim/mujoco_sim_node.py
+
+## 已知注意事项
+
+- MuJoCo 只使用 XML；URDF 仅用于 RViz/TF。
+- 若使用 ros2 launch 启动 deploy_node 时遇到键盘输入不响应，改用 ros2 run 方式可规避终端 stdin 继承问题。
+- 配置缺失关键字段时会在启动阶段直接报错退出（这是设计行为，用于防止 silent fallback）。
