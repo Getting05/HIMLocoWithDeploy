@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/joint_state.hpp>
+#include <ros/ros.h>
+#include <sensor_msgs/JointState.h>
 
 #include "robot_config.h"
 
@@ -21,11 +21,11 @@ namespace deploy {
 class RobotVisualizer {
 public:
   /**
-   * @brief Construct visualizer attached to an existing ROS2 node.
-   * @param node        Pointer to the owning node (used to create publisher)
+   * @brief Construct visualizer attached to a ROS1 node handle.
+   * @param nh          Reference to the node handle (used to create publisher)
    * @param joint_names Joint name list matching URDF (size NUM_JOINTS)
    */
-  explicit RobotVisualizer(rclcpp::Node *node,
+  explicit RobotVisualizer(ros::NodeHandle &nh,
                            const std::array<std::string, NUM_JOINTS> &joint_names);
 
   /**
@@ -37,7 +37,7 @@ public:
                             const std::array<float, NUM_JOINTS> &dof_vel);
 
 private:
-  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr pub_;
+  ros::Publisher pub_;
   std::vector<std::string> joint_names_;
 };
 

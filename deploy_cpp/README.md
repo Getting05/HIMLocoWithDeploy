@@ -1,8 +1,8 @@
-# deploy_cpp — C++ 真机/仿真部署节点
+# deploy_cpp — C++ 真机/仿真部署节点 (ROS1 Noetic 版)
 
-基于 ROS2 Humble 的四足机器人部署系统，使用 LibTorch 执行 HIM 策略推理，通过 Unitree GO-M8010-6 SDK 控制 12 个关节，并支持 MuJoCo 仿真闭环验证。
+基于 ROS1 Noetic 的四足机器人部署系统，使用 LibTorch 执行 HIM 策略推理，通过 Unitree GO-M8010-6 SDK 控制 12 个关节，并支持 MuJoCo 仿真闭环验证。
 
-本版本已完成以下关键改造：
+本系统已从 ROS2 Humble 完整迁移至 ROS1 Noetic：
 
 - 运行时参数统一迁移到 YAML（强制配置文件启动）
 - 支持逐关节传动比 joint_transmission_ratio
@@ -51,10 +51,10 @@ deploy_cpp/
 │   ├── cyclonedds.xml
 │   └── setup_cyclonedds.sh
 ├── launch/
-│   ├── deploy.launch.py
-│   ├── sim.launch.py
-│   ├── visualize.launch.py
-│   └── motor_debug.launch.py
+│   ├── deploy.launch
+│   ├── sim.launch
+│   ├── visualize.launch
+│   └── motor_debug.launch
 ├── sim/
 │   ├── mujoco_sim_node.py
 │   └── requirements.txt
@@ -70,17 +70,16 @@ deploy_cpp/
 
 ## 依赖
 
-- ROS2 Humble (rclcpp, std_msgs, sensor_msgs)
+- ROS1 Noetic (roscpp, std_msgs, sensor_msgs, robot_state_publisher, rviz)
 - LibTorch (PyTorch C++ API)
 - Unitree Actuator SDK
 - yaml-cpp (C++ 读取 YAML)
 - PyYAML (Python 仿真节点读取 YAML)
-- robot_state_publisher / rviz2（可视化）
 
 安装示例：
 
 ```bash
-sudo apt install ros-humble-robot-state-publisher ros-humble-rviz2
+sudo apt install ros-noetic-robot-state-publisher ros-noetic-rviz
 sudo apt install libyaml-cpp-dev
 ```
 
@@ -165,14 +164,38 @@ mybot_v2 默认模型字段：
 
 ## 构建
 
+由于本机已从 ROS2 迁移至 ROS1，整个 package 现在基于 `catkin` 构建。请确保将 `deploy_cpp` 放置在标准的 catkin 工作空间下的 `src/` 目录中。
+
 ```bash
-cd ~/humble/Quadruped/HIMLoco
-source /opt/ros/humble/setup.bash
+# 假设你的工作区叫 catkin_ws
+mkdir -p ~/catkin_ws/src
+cd ~/catkin_ws/src
+# (假设你的代码移动或软链接到这里)
+ln -s /home/getting/noetic/HIMLocoWithDeploy/deploy_cpp .
 
-colcon build --packages-select deploy_cpp \
-  --cmake-args -DTorch_DIR=/opt/libtorch/share/cmake/Torch
+# 退回到工作区根目录
+cd ~/catkin_ws
+source /opt/ros/noetic/setup.bash
 
-source install/setup.bash
+# 编译代码
+catkin_make --pkg deploy_cpp -DTorch_DIR=/opt/libtorch/share/cmake/Torch
+
+# 刷新环境变量即可使用
+source devel/setup.bash
+
+```
+
+```bash
+# 假设你的工作空间是 ~/catkin_ws
+cd ~/catkin_ws
+source /opt/ros/noetic/setup.bash
+
+# 编译该包并传入 LibTorch 路径
+catkin_make --pkg deploy_cpp \
+  -DTorch_DIR=/opt/libtorch/share/cmake/Torch
+
+# 刷新环境变量
+source devel/setup.bash
 ```
 export LD_LIBRARY_PATH=/home/getting/miniconda3/envs/himloco/lib:$LD_LIBRARY_PATH
 ## 运行
@@ -180,38 +203,36 @@ export LD_LIBRARY_PATH=/home/getting/miniconda3/envs/himloco/lib:$LD_LIBRARY_PAT
 ### A. 真机（推荐 launch）
 
 ```bash
-source /opt/ros/humble/setup.bash
-source ~/humble/Quadruped/HIMLoco/install/setup.bash
+source ~/catkin_ws/devel/setup.bash
 
-ros2 launch deploy_cpp deploy.launch.py \
-  robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot.yaml
+roslaunch deploy_cpp deploy.launch \
+  robot_config_file:=$(rospack find deploy_cpp)/config/robots/mybot.yaml
 ```
 
 切换到 mybot_v2：
 
 ```bash
-ros2 launch deploy_cpp deploy.launch.py \
-  robot_config_file:=/home/getting/humble/Quadruped/HIMLoco/deploy_cpp/config/robots/mybot_v2_real.yaml
+roslaunch deploy_cpp deploy.launch \
+  robot_config_file:=$(rospack find deploy_cpp)/config/robots/mybot_v2_real.yaml
 ```
 
 ### B. 真机（直接 run）
 
 ```bash
-ros2 run deploy_cpp deploy_node --ros-args \
-  -p robot_config_file:=$(ros2 pkg prefix deploy_cpp)/share/deploy_cpp/config/robots/mybot.yaml
+rosrun deploy_cpp deploy_node _robot_config_file:=$(rospack find deploy_cpp)/config/robots/mybot.yaml
 ```
 
 ```bash
-ros2 run deploy_cpp deploy_node --ros-args -p robot_config_file:=/home/getting/humble/Quadruped/HIMLoco/deploy_cpp/config/robots/mybot_v2_real.yaml
+rosrun deploy_cpp deploy_node _robot_config_file:=$(rospack find deploy_cpp)/config/robots/mybot_v2_real.yaml
 ```
 
 
 ### C. Debug 无电机
 
 ```bash
-ros2 run deploy_cpp deploy_node --ros-args \
-  -p robot_config_file:=/home/getting/humble/Quadruped/HIMLoco/deploy_cpp/config/robots/mybot_v2_real.yaml \
-  -p debug_no_motor:=true
+rosrun deploy_cpp deploy_node \
+  _robot_config_file:=$(rospack find deploy_cpp)/config/robots/mybot_v2_real.yaml \
+  _debug_no_motor:=true
 ```
 
 ### D. MuJoCo 仿真（推荐）
@@ -220,16 +241,18 @@ ros2 run deploy_cpp deploy_node --ros-args \
 切换 mybot_v2：
 
 ```bash
+# 先启动 Python 仿真端 (激活 conda himloco 环境)
 python3 sim/mujoco_sim_node.py \
   --robot-config config/robots/mybot_v2_sim.yaml
 
-ros2 run deploy_cpp deploy_node --ros-args -p robot_config_file:=/home/getting/humble/Quadruped/HIMLoco/deploy_cpp/config/robots/mybot_v2_sim.yaml -p sim_mode:=true -p debug_no_motor:=false
+# 然后启动 C++ 部署节点
+rosrun deploy_cpp deploy_node _robot_config_file:=$(rospack find deploy_cpp)/config/robots/mybot_v2_sim.yaml _sim_mode:=true _debug_no_motor:=false
 ```
 
 ### E. 电机调试节点
 
 ```bash
-ros2 launch deploy_cpp motor_debug.launch.py
+roslaunch deploy_cpp motor_debug.launch
 ```
 
 ### F. 手机网页 UDP 遥控 (Web Teleop)
@@ -238,7 +261,7 @@ ros2 launch deploy_cpp motor_debug.launch.py
 
 **步骤 1：启动 C++ 部署节点**
 ```bash
-ros2 run deploy_cpp deploy_node --ros-args -p robot_config_file:=config/robots/mybot_v2_real.yaml
+rosrun deploy_cpp deploy_node _robot_config_file:=config/robots/mybot_v2_real.yaml
 ```
 
 **步骤 2：启动 Python Web 中转服务端**
@@ -261,19 +284,19 @@ python3 app.py --udp-port 9870 --web-port 5000
 
 ## launch 参数
 
-### deploy.launch.py
+### deploy.launch
 
 - robot_config_file: 机器人 YAML 路径（必需语义）
 - debug_no_motor: true/false
 - sim_mode: true/false
 - sim_pingpong_mode: true/false
 
-### sim.launch.py
+### sim.launch
 
 - robot_config_file: 机器人 YAML 路径
 - sim_pingpong_mode: true/false
 
-sim.launch.py 会从 YAML 中读取 urdf_relpath 并自动启动 robot_state_publisher。
+sim.launch 如果需要可以自动从 YAML 中对应的 urdf_relpath 启动 robot_state_publisher。由于由 ros2 的 Python Launch 文件改成了 XML ，可能需要手动通过 `textfile` 包含 URDF，详细可见 launch 文件内部长注释。
 
 ## 键盘控制
 
@@ -290,14 +313,7 @@ sim.launch.py 会从 YAML 中读取 urdf_relpath 并自动启动 robot_state_pub
 
 实际步长和速度范围由 YAML 中 cmd_vx_step/cmd_vy_step/cmd_yaw_step 与 cmd_*_min/max 决定。
 
-## QoS
 
-| Topic | Reliability | Depth | Durability |
-|---|---|---|---|
-| /mujoco/joint_cmd | BEST_EFFORT | 1 | VOLATILE |
-| /mujoco/joint_state | BEST_EFFORT | 1 | VOLATILE |
-| /fast_livo2/state6 | BEST_EFFORT | 1 | VOLATILE |
-| /joint_states | RELIABLE | 10 | VOLATILE |
 
 ## 当前关键实现摘要
 
@@ -311,5 +327,5 @@ sim.launch.py 会从 YAML 中读取 urdf_relpath 并自动启动 robot_state_pub
 ## 已知注意事项
 
 - MuJoCo 只使用 XML；URDF 仅用于 RViz/TF。
-- 若使用 ros2 launch 启动 deploy_node 时遇到键盘输入不响应，改用 ros2 run 方式可规避终端 stdin 继承问题。
+- 启动 deploy_node 时如果终端输入拦截存在冲突，尝试独立终端跑或者不用 launch 文件直接跑 `rosrun`。
 - 配置缺失关键字段时会在启动阶段直接报错退出（这是设计行为，用于防止 silent fallback）。

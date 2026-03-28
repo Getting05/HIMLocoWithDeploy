@@ -8,10 +8,10 @@
  * This is a standalone debug tool — no IMU, policy, or keyboard needed.
  *
  * Usage:
- *   ros2 run deploy_cpp motor_debug_node --ros-args \
- *     -p port0:=/dev/ttyUSB0 \
- *     -p port1:=/dev/ttyUSB1 \
- *     -p rate_hz:=50.0
+ *   rosrun deploy_cpp motor_debug_node \
+ *     _port0:=/dev/ttyUSB0 \
+ *     _port1:=/dev/ttyUSB1 \
+ *     _rate_hz:=50.0
  */
 
 #include <atomic>
@@ -21,7 +21,7 @@
 #include <iostream>
 #include <memory>
 
-#include <rclcpp/rclcpp.hpp>
+#include <ros/ros.h>
 
 #include "motor_driver.h"
 #include "robot_runtime_config.h"
@@ -42,47 +42,39 @@ static const char *DEBUG_BANNER = R"(
 ╚══════════════════════════════════════════════════╝
 )";
 
-class MotorDebugNode : public rclcpp::Node {
+class MotorDebugNode {
 public:
-  MotorDebugNode() : Node("motor_debug_node") {
-    this->declare_parameter<std::string>("port0", "/dev/ttyUSB0");
-    this->declare_parameter<std::string>("port1", "/dev/ttyUSB1");
-    this->declare_parameter<double>("rate_hz", 50.0);
-    this->declare_parameter<std::string>("robot_config_file", "");
-  }
+  explicit MotorDebugNode(ros::NodeHandle &nh) : nh_(nh) {}
 
   void initialize() {
-    auto port0 = this->get_parameter("port0").as_string();
-    auto port1 = this->get_parameter("port1").as_string();
-    auto robot_config_file = this->get_parameter("robot_config_file").as_string();
-    rate_hz_ = this->get_parameter("rate_hz").as_double();
+    std::string port0, port1, robot_config_file;
+    nh_.param<std::string>("port0", port0, "/dev/ttyUSB0");
+    nh_.param<std::string>("port1", port1, "/dev/ttyUSB1");
+    nh_.param<double>("rate_hz", rate_hz_, 50.0);
+    nh_.param<std::string>("robot_config_file", robot_config_file, "");
 
     std::cout << DEBUG_BANNER << std::endl;
 
-    RCLCPP_INFO(this->get_logger(),
-                "Connecting motors: port0=%s, port1=%s, rate=%.1f Hz",
-                port0.c_str(), port1.c_str(), rate_hz_);
+    ROS_INFO("Connecting motors: port0=%s, port1=%s, rate=%.1f Hz",
+             port0.c_str(), port1.c_str(), rate_hz_);
 
     // Load robot configuration
     if (!robot_config_file.empty()) {
       config_ = load_robot_runtime_config(robot_config_file);
-      RCLCPP_INFO(this->get_logger(),
-                  "Loaded config from %s (robot: %s)",
-                  robot_config_file.c_str(), config_.robot_name.c_str());
+      ROS_INFO("Loaded config from %s (robot: %s)",
+               robot_config_file.c_str(), config_.robot_name.c_str());
     } else {
       config_ = default_robot_runtime_config();
-      RCLCPP_INFO(this->get_logger(),
-                  "Using default config (robot: %s)",
-                  config_.robot_name.c_str());
+      ROS_INFO("Using default config (robot: %s)",
+               config_.robot_name.c_str());
     }
 
     motor_ = std::make_unique<MotorDriver>(config_, port0, port1);
 
     // RViz visualizer (publishes /joint_states)
-    visualizer_ = std::make_unique<RobotVisualizer>(this, config_.joint_names);
+    visualizer_ = std::make_unique<RobotVisualizer>(nh_, config_.joint_names);
 
-    RCLCPP_INFO(this->get_logger(),
-                "Motor driver initialized. Reading angles...");
+    ROS_INFO("Motor driver initialized. Reading angles...");
 
     // Print header
     std::cout << "\n";
@@ -90,9 +82,9 @@ public:
   }
 
   void run() {
-    rclcpp::Rate rate(rate_hz_);
+    ros::Rate rate(rate_hz_);
 
-    while (rclcpp::ok()) {
+    while (ros::ok()) {
       // Send zero torque command to all motors
       // This sends q=0, dq=0, kp=0, kd=0, tau=0
       // The motor driver still reads back encoder feedback
@@ -100,7 +92,7 @@ public:
 
       // Check for motor errors
       if (motor_->check_errors()) {
-        RCLCPP_WARN(this->get_logger(), "Motor errors detected!");
+        ROS_WARN("Motor errors detected!");
       }
 
       // Publish joint states for RViz
@@ -144,7 +136,7 @@ private:
   }
 
   void shutdown() {
-    RCLCPP_INFO(this->get_logger(), "Shutting down motor debug node...");
+    ROS_INFO("Shutting down motor debug node...");
     if (motor_) {
       motor_->set_zero_torque();
       motor_->set_zero_torque();
@@ -152,6 +144,7 @@ private:
     std::cout << "\n[MotorDebug] Shutdown complete." << std::endl;
   }
 
+  ros::NodeHandle &nh_;
   double rate_hz_ = 50.0;
   RobotRuntimeConfig config_;
   std::unique_ptr<MotorDriver> motor_;
@@ -165,25 +158,26 @@ static std::atomic<bool> g_shutdown{false};
 
 void signal_handler(int /*sig*/) {
   g_shutdown.store(true);
-  rclcpp::shutdown();
+  ros::shutdown();
 }
 
 int main(int argc, char *argv[]) {
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
 
-  rclcpp::init(argc, argv);
+  ros::init(argc, argv, "motor_debug_node");
+  ros::NodeHandle nh("~");
 
-  auto node = std::make_shared<deploy::MotorDebugNode>();
+  deploy::MotorDebugNode node(nh);
 
   try {
-    node->initialize();
-    node->run();
+    node.initialize();
+    node.run();
   } catch (const std::exception &e) {
-    RCLCPP_ERROR(node->get_logger(), "Fatal error: %s", e.what());
+    ROS_ERROR("Fatal error: %s", e.what());
     return 1;
   }
 
-  rclcpp::shutdown();
+  ros::shutdown();
   return 0;
 }

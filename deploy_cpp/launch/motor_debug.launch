@@ -1,0 +1,44 @@
+<!-- Launch file for motor debug node with RViz visualization (ROS1 Noetic)
+
+Sends zero parameters to all motors, reads back joint angles,
+and displays the robot state in RViz for visual verification.
+
+Usage:
+  roslaunch deploy_cpp motor_debug.launch
+  roslaunch deploy_cpp motor_debug.launch port0:=/dev/ttyUSB2 port1:=/dev/ttyUSB3
+  roslaunch deploy_cpp motor_debug.launch rviz:=false
+-->
+<launch>
+    <arg name="port0" default="/dev/ttyUSB1"
+         doc="Serial port for front legs" />
+    <arg name="port1" default="/dev/ttyUSB0"
+         doc="Serial port for rear legs" />
+    <arg name="rate_hz" default="50.0"
+         doc="Read rate in Hz" />
+    <arg name="rviz" default="true"
+         doc="Launch RViz for visualization" />
+    <arg name="config_file"
+         default="$(find deploy_cpp)/config/robots/mybot_v2_real.yaml"
+         doc="Robot configuration YAML file" />
+
+    <!-- Motor debug node (publishes /joint_states) -->
+    <node pkg="deploy_cpp" type="motor_debug_node" name="motor_debug_node" output="screen">
+        <param name="port0" value="$(arg port0)" />
+        <param name="port1" value="$(arg port1)" />
+        <param name="rate_hz" value="$(arg rate_hz)" />
+        <param name="robot_config_file" value="$(arg config_file)" />
+    </node>
+
+    <!-- Robot State Publisher (URDF -> TF) -->
+    <group if="$(arg rviz)">
+        <param name="robot_description"
+               textfile="$(find deploy_cpp)/robot/mybot_v2/urdf/mybot_v2.urdf" />
+
+        <node pkg="robot_state_publisher" type="robot_state_publisher"
+              name="robot_state_publisher" output="screen" />
+
+        <!-- RViz -->
+        <node pkg="rviz" type="rviz" name="rviz" output="screen"
+              args="-d $(find deploy_cpp)/config/mybot_v2.rviz" />
+    </group>
+</launch>

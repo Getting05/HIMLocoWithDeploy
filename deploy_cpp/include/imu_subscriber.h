@@ -1,6 +1,6 @@
 /**
  * @file imu_subscriber.h
- * @brief ROS2 subscriber for state data from /fast_livo2/state6 topic.
+ * @brief ROS1 subscriber for state data from /fast_livo2/state6 topic.
  *
  * Receives angular velocity and projected gravity vector directly as
  * std_msgs/Float32MultiArray with 6 floats:
@@ -11,16 +11,19 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
+#include <string>
 
-#include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/float32_multi_array.hpp>
+#include <ros/ros.h>
+#include <std_msgs/Float32MultiArray.h>
 
 namespace deploy {
 
-class IMUSubscriber : public rclcpp::Node {
+class IMUSubscriber {
 public:
-  explicit IMUSubscriber(const std::string &topic = "/fast_livo2/state6_imu_prop",
+  explicit IMUSubscriber(ros::NodeHandle &nh,
+                         const std::string &topic = "/fast_livo2/state6_imu_prop",
                          float yaw_correction_deg = 0.0f);
 
   /// Get angular velocity [wx, wy, wz] in body frame [rad/s].
@@ -36,9 +39,9 @@ public:
   uint64_t msg_count() const { return msg_count_.load(); }
 
 private:
-  void state_callback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
+  void state_callback(const std_msgs::Float32MultiArray::ConstPtr &msg);
 
-  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr sub_;
+  ros::Subscriber sub_;
 
   mutable std::mutex mutex_;
   std::array<float, 3> ang_vel_ = {0.0f, 0.0f, 0.0f};

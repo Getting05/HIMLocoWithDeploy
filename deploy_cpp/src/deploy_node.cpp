@@ -2,20 +2,19 @@
  * @file deploy_node.cpp
  * @brief Main deployment node for Mybot quadruped robot.
  *
- * ROS2 node + 50Hz control loop integrating:
- *   - IMU subscriber (ROS2 /fast_livo2/state6)
+ * ROS1 node + 50Hz control loop integrating:
+ *   - IMU subscriber (ROS1 /fast_livo2/state6)
  *   - Motor driver (Unitree GO-M8010-6 SDK)
  *   - HIM policy inference (LibTorch JIT)
  *   - Keyboard controller (velocity commands + state switching)
  *   - State machine (Idle / StandUp / RL / JointDamping)
  *
  * Usage:
- *   ros2 run deploy_cpp deploy_node --ros-args \
- *     -p policy_path:=/path/to/policy.pt \
- *     -p device:=cuda:0 \
- *     -p port0:=/dev/ttyUSB0 \
- *     -p port1:=/dev/ttyUSB1 \
- *     -p debug_no_motor:=false
+ *   rosrun deploy_cpp deploy_node \
+ *     _robot_config_file:=/path/to/config.yaml \
+ *     _debug_no_motor:=false \
+ *     _sim_mode:=false \
+ *     _sim_pingpong_mode:=false
  */
 
 #include <atomic>
@@ -27,8 +26,8 @@
 #include <memory>
 #include <thread>
 
-#include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/float32_multi_array.hpp>
+#include <ros/ros.h>
+#include <std_msgs/Float32MultiArray.h>
 
 #include "imu_subscriber.h"
 #include "keyboard_controller.h"
@@ -129,29 +128,23 @@ private:
 };
 
 // ====================================================================== //
-//  MujocoMotorDriver — ROS2 topic bridge to MuJoCo Python simulation     //
+//  MujocoMotorDriver — ROS1 topic bridge to MuJoCo Python simulation     //
 // ====================================================================== //
 
 class MujocoMotorDriver {
 public:
-  MujocoMotorDriver(rclcpp::Node *node, const RobotRuntimeConfig &config)
+  MujocoMotorDriver(ros::NodeHandle &nh, const RobotRuntimeConfig &config)
       : config_(config) {
     dof_pos_ = config_.default_dof_pos;
     dof_vel_.fill(0.0f);
 
-    // Low-latency QoS for real-time control: BEST_EFFORT, depth=1, VOLATILE
-    rclcpp::QoS qos(rclcpp::KeepLast(1));
-    qos.best_effort();
-    qos.durability_volatile();
-
     // Publisher: send target joint positions to MuJoCo sim
-    pub_ = node->create_publisher<std_msgs::msg::Float32MultiArray>(
-        "/mujoco/joint_cmd", qos);
+    pub_ = nh.advertise<std_msgs::Float32MultiArray>("/mujoco/joint_cmd", 1);
 
     // Subscriber: receive joint states from MuJoCo sim
-    sub_ = node->create_subscription<std_msgs::msg::Float32MultiArray>(
-        "/mujoco/joint_state", qos,
-        [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
+    sub_ = nh.subscribe<std_msgs::Float32MultiArray>(
+        "/mujoco/joint_state", 1,
+        [this](const std_msgs::Float32MultiArray::ConstPtr &msg) {
           if (msg->data.size() >= NUM_JOINTS * 2) {
             for (int i = 0; i < NUM_JOINTS; ++i) {
               dof_pos_[i] = msg->data[i];
@@ -161,45 +154,43 @@ public:
           }
         });
 
-    RCLCPP_INFO(
-        node->get_logger(),
-        "MujocoMotorDriver: pub=/mujoco/joint_cmd, sub=/mujoco/joint_state");
+    ROS_INFO("MujocoMotorDriver: pub=/mujoco/joint_cmd, sub=/mujoco/joint_state");
   }
 
   void send_commands(const std::array<float, NUM_JOINTS> &target_dof_pos,
                      const std::array<float, NUM_JOINTS> &kp,
                      const std::array<float, NUM_JOINTS> &kd) {
-    std_msgs::msg::Float32MultiArray msg;
+    std_msgs::Float32MultiArray msg;
     msg.data.resize(NUM_JOINTS * 3);
     for (int i = 0; i < NUM_JOINTS; ++i) {
       msg.data[i] = target_dof_pos[i];
       msg.data[NUM_JOINTS + i] = kp[i];
       msg.data[2 * NUM_JOINTS + i] = kd[i];
     }
-    pub_->publish(msg);
+    pub_.publish(msg);
   }
 
   void send_damping(float kd) {
     // Send current position as target with only kd
-    std_msgs::msg::Float32MultiArray msg;
+    std_msgs::Float32MultiArray msg;
     msg.data.resize(NUM_JOINTS * 3);
     for (int i = 0; i < NUM_JOINTS; ++i) {
       msg.data[i] = dof_pos_[i];
       msg.data[NUM_JOINTS + i] = 0.0f;
       msg.data[2 * NUM_JOINTS + i] = kd;
     }
-    pub_->publish(msg);
+    pub_.publish(msg);
   }
 
   void set_zero_torque() {
-    std_msgs::msg::Float32MultiArray msg;
+    std_msgs::Float32MultiArray msg;
     msg.data.resize(NUM_JOINTS * 3);
     for (int i = 0; i < NUM_JOINTS; ++i) {
       msg.data[i] = dof_pos_[i];
       msg.data[NUM_JOINTS + i] = 0.0f;
       msg.data[2 * NUM_JOINTS + i] = 0.0f;
     }
-    pub_->publish(msg);
+    pub_.publish(msg);
   }
 
   bool check_errors() const { return false; }
@@ -214,35 +205,30 @@ private:
   std::array<float, NUM_JOINTS> dof_pos_;
   std::array<float, NUM_JOINTS> dof_vel_;
   std::atomic<uint64_t> msg_count_{0};
-  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_;
-  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr sub_;
+  ros::Publisher pub_;
+  ros::Subscriber sub_;
 };
 
 // ====================================================================== //
-//  DeployNode — main ROS2 deployment controller                          //
+//  DeployNode — main ROS1 deployment controller                          //
 // ====================================================================== //
 
-class DeployNode : public rclcpp::Node {
+class DeployNode {
 public:
-  DeployNode() : Node("deploy_node") {
-    // Declare parameters
-    this->declare_parameter<std::string>("robot_config_file", "");
-    this->declare_parameter<bool>("debug_no_motor", false);
-    this->declare_parameter<bool>("sim_mode", false);
-    this->declare_parameter<bool>("sim_pingpong_mode", false);
-  }
+  explicit DeployNode(ros::NodeHandle &nh) : nh_(nh) {}
 
   void initialize() {
-    auto config_file = this->get_parameter("robot_config_file").as_string();
+    std::string config_file;
+    nh_.param<std::string>("robot_config_file", config_file, "");
     if (config_file.empty()) {
       throw std::runtime_error("robot_config_file is required");
     }
     config_ = load_robot_runtime_config(config_file);
     build_dof_permutation();
 
-    debug_no_motor_ = this->get_parameter("debug_no_motor").as_bool();
-    sim_mode_ = this->get_parameter("sim_mode").as_bool();
-    sim_pingpong_mode_ = this->get_parameter("sim_pingpong_mode").as_bool();
+    nh_.param<bool>("debug_no_motor", debug_no_motor_, false);
+    nh_.param<bool>("sim_mode", sim_mode_, false);
+    nh_.param<bool>("sim_pingpong_mode", sim_pingpong_mode_, false);
     const auto standup_target_driver =
       reorder_policy_to_driver(config_.standup_target_pos);
     last_safe_target_ = standup_target_driver;
@@ -251,67 +237,63 @@ public:
     std::cout << BANNER << std::endl;
 
     // ---- State subscriber (ang_vel + projected_gravity from fast_livo2) ----
-    imu_ = std::make_shared<IMUSubscriber>(config_.imu_topic,
+    imu_ = std::make_shared<IMUSubscriber>(nh_, config_.imu_topic,
                          config_.imu_yaw_correction_deg);
-    RCLCPP_INFO(this->get_logger(), "IMU subscriber initialized");
+    ROS_INFO("IMU subscriber initialized");
 
     // ---- Motor driver ----
     if (sim_mode_) {
-      mujoco_motor_ = std::make_unique<MujocoMotorDriver>(this, config_);
-      RCLCPP_INFO(this->get_logger(),
-                  "SIM: Using MuJoCo motor driver (ROS2 topics)");
+      mujoco_motor_ = std::make_unique<MujocoMotorDriver>(nh_, config_);
+      ROS_INFO("SIM: Using MuJoCo motor driver (ROS1 topics)");
       if (sim_pingpong_mode_) {
-        RCLCPP_INFO(this->get_logger(),
-                    "SIM ping-pong mode enabled: state-triggered control (no wall-clock control sleep)");
+        ROS_INFO("SIM ping-pong mode enabled: state-triggered control (no wall-clock control sleep)");
       }
     } else if (!debug_no_motor_) {
       motor_ = std::make_unique<MotorDriver>(config_, config_.port0, config_.port1);
-      RCLCPP_INFO(this->get_logger(), "Motor driver initialized");
+      ROS_INFO("Motor driver initialized");
     } else {
       fake_motor_ = std::make_unique<FakeMotorDriver>(config_);
-      RCLCPP_INFO(this->get_logger(), "DEBUG: Using fake motor driver");
+      ROS_INFO("DEBUG: Using fake motor driver");
     }
 
     // ---- Policy runner ----
     policy_ = std::make_unique<PolicyRunner>(config_.policy_path, config_);
-    RCLCPP_INFO(this->get_logger(), "Policy runner initialized");
+    ROS_INFO("Policy runner initialized");
 
     // ---- Keyboard controller ----
     keyboard_ = std::make_unique<KeyboardController>(config_);
-    RCLCPP_INFO(this->get_logger(), "Keyboard controller initialized");
+    ROS_INFO("Keyboard controller initialized");
 
     // ---- UDP teleop controller (optional) ----
     if (config_.teleop_udp_enable) {
       udp_ctrl_ = std::make_unique<UdpController>(config_.teleop_udp_port);
-      RCLCPP_INFO(this->get_logger(),
-                  "UDP teleop controller listening on port %d",
-                  config_.teleop_udp_port);
+      ROS_INFO("UDP teleop controller listening on port %d",
+               config_.teleop_udp_port);
     }
 
     // ---- State machine ----
     sm_ = std::make_unique<StateMachine>(config_);
-    RCLCPP_INFO(this->get_logger(), "State machine initialized (IDLE)");
+    ROS_INFO("State machine initialized (IDLE)");
 
     // ---- RViz visualizer ----
-    visualizer_ = std::make_unique<RobotVisualizer>(this, config_.joint_names);
-    RCLCPP_INFO(this->get_logger(), "RViz visualizer initialized");
+    visualizer_ = std::make_unique<RobotVisualizer>(nh_, config_.joint_names);
+    ROS_INFO("RViz visualizer initialized");
 
-    RCLCPP_INFO(this->get_logger(), "All modules ready. Press 1 to stand up.");
+    ROS_INFO("All modules ready. Press 1 to stand up.");
   }
 
   void run() {
-    rclcpp::Rate rate(1.0 / config_.control_dt);
+    ros::Rate rate(1.0 / config_.control_dt);
     uint64_t loop_count = 0;
     uint64_t last_joint_msg_count = 0;
     uint64_t last_imu_msg_count = 0;
     auto last_print_time = std::chrono::steady_clock::now();
 
-    while (rclcpp::ok() && !keyboard_->is_exit()) {
+    while (ros::ok() && !keyboard_->is_exit()) {
       // 1. Spin / wait for fresh state
       if (sim_mode_ && sim_pingpong_mode_ && mujoco_motor_) {
-        while (rclcpp::ok() && !keyboard_->is_exit()) {
-          rclcpp::spin_some(imu_);
-          rclcpp::spin_some(this->shared_from_this());
+        while (ros::ok() && !keyboard_->is_exit()) {
+          ros::spinOnce();
 
           const uint64_t joint_count = mujoco_motor_->msg_count();
           const uint64_t imu_count = imu_->msg_count();
@@ -323,10 +305,7 @@ public:
           std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
       } else {
-        rclcpp::spin_some(imu_);
-        if (sim_mode_) {
-          rclcpp::spin_some(this->shared_from_this());
-        }
+        ros::spinOnce();
       }
 
       // 2a. Handle UDP teleop commands (if enabled)
@@ -430,7 +409,7 @@ private:
 
   void handle_state_request(const StateRequest &req) {
     if (req.emergency) {
-      RCLCPP_WARN(this->get_logger(), "EMERGENCY STOP!");
+      ROS_WARN("EMERGENCY STOP!");
     }
 
     RobotState old_state = sm_->state();
@@ -441,7 +420,7 @@ private:
       if (req.target == RobotState::RL ||
           req.target == RobotState::SINGLE_STEP_RL) {
         policy_->reset();
-        RCLCPP_INFO(this->get_logger(), "Policy history reset");
+        ROS_INFO("Policy history reset");
         if (req.target == RobotState::SINGLE_STEP_RL) {
           single_step_count_ = 0;
           single_step_pending_ = false;
@@ -452,8 +431,7 @@ private:
       // On entering JointSweep, reset sweep state
       if (req.target == RobotState::JOINT_SWEEP) {
         keyboard_->reset_sweep();
-        RCLCPP_INFO(this->get_logger(),
-                    "JointSweep: J/K=joint  +/-=offset  Enter=send");
+        ROS_INFO("JointSweep: J/K=joint  +/-=offset  Enter=send");
       }
     }
   }
@@ -494,8 +472,7 @@ private:
     if (sm_->standup_complete()) {
       static bool printed = false;
       if (!printed) {
-        RCLCPP_INFO(this->get_logger(),
-                    "Standup complete! Press 2 to enter RL mode.");
+        ROS_INFO("Standup complete! Press 2 to enter RL mode.");
         printed = true;
       }
     }
@@ -519,13 +496,6 @@ private:
     policy_->step(commands, ang_vel, projected_gravity, dof_pos_policy,
             dof_vel_policy, target_dof_pos_policy, actions);
     auto target_dof_pos_driver = reorder_policy_to_driver(target_dof_pos_policy);
-    // test
-    //     target_dof_pos = {
-    //     -0.39f, 0.77f, -1.50f,
-    //     0.1f, 0.75f, -1.81f,
-    //     0.1f, 0.93f, -1.54f,
-    //     0.1f, 0.71f, -0.98f
-    // };
 
     // Send to motors
     if (motor_) {
@@ -756,7 +726,6 @@ private:
         << std::fixed << std::setprecision(2) << commands[0] << ","
         << commands[1] << "," << commands[2]
         << "]"
-        //   << " pos[0:3]=[" << pos[0] << "," << pos[1] << "," << pos[2] << "]"
         << " ang_vel=[" << ang_vel[0] << "," << ang_vel[1] << "," << ang_vel[2]
         << "]"
         << " grav=[" << proj_grav[0] << "," << proj_grav[1] << ","
@@ -769,7 +738,7 @@ private:
   // ------------------------------------------------------------------ //
 
   void shutdown() {
-    RCLCPP_INFO(this->get_logger(), "Shutting down...");
+    ROS_INFO("Shutting down...");
 
     // Force idle (zero torque)
     if (motor_) {
@@ -788,6 +757,7 @@ private:
   //  Members                                                            //
   // ------------------------------------------------------------------ //
 
+  ros::NodeHandle &nh_;
   bool debug_no_motor_ = false;
   bool sim_mode_ = false;
   bool sim_pingpong_mode_ = false;
@@ -831,7 +801,7 @@ static std::atomic<bool> g_shutdown{false};
 
 void signal_handler(int /*sig*/) {
   g_shutdown.store(true);
-  rclcpp::shutdown();
+  ros::shutdown();
 }
 
 // ====================================================================== //
@@ -843,19 +813,20 @@ int main(int argc, char *argv[]) {
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
 
-  // Initialize ROS2
-  rclcpp::init(argc, argv);
+  // Initialize ROS1
+  ros::init(argc, argv, "deploy_node");
+  ros::NodeHandle nh("~");
 
-  auto node = std::make_shared<deploy::DeployNode>();
+  deploy::DeployNode node(nh);
 
   try {
-    node->initialize();
-    node->run();
+    node.initialize();
+    node.run();
   } catch (const std::exception &e) {
-    RCLCPP_ERROR(node->get_logger(), "Fatal error: %s", e.what());
+    ROS_ERROR("Fatal error: %s", e.what());
     return 1;
   }
 
-  rclcpp::shutdown();
+  ros::shutdown();
   return 0;
 }

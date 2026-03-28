@@ -62,3 +62,4 @@ isaacgym/
 install/
 build/
 log/
+catkin_ws/

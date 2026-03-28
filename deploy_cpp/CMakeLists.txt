@@ -6,11 +6,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wextra")
 
 # ========================== Dependencies ==========================
 
-# ROS2
-find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
+# ROS1 (catkin)
+find_package(catkin REQUIRED COMPONENTS
+    roscpp
+    std_msgs
+    sensor_msgs
+)
+
 find_package(yaml-cpp REQUIRED)
 
 # LibTorch (PyTorch C++ API)
@@ -32,10 +34,18 @@ if(NOT EXISTS "${UNITREE_SDK_LIB}")
     message(FATAL_ERROR "Unitree SDK library not found: ${UNITREE_SDK_LIB}")
 endif()
 
+# ========================== Catkin Package ==========================
+
+catkin_package(
+    INCLUDE_DIRS include
+    CATKIN_DEPENDS roscpp std_msgs sensor_msgs
+)
+
 # ========================== Include Directories ==========================
 
 include_directories(
     include
+    ${catkin_INCLUDE_DIRS}
     ${UNITREE_SDK_INCLUDE_DIR}
 )
 
@@ -66,13 +76,8 @@ add_executable(deploy_node ${SOURCES})
 target_link_libraries(deploy_node
     ${UNITREE_SDK_LIB}
     ${TORCH_LIBRARIES}
+    ${catkin_LIBRARIES}
     yaml-cpp
-)
-
-ament_target_dependencies(deploy_node
-    rclcpp
-    std_msgs
-    sensor_msgs
 )
 
 # Motor debug node (standalone, with RViz visualization)
@@ -85,51 +90,42 @@ add_executable(motor_debug_node
 
 target_link_libraries(motor_debug_node
     ${UNITREE_SDK_LIB}
+    ${catkin_LIBRARIES}
     yaml-cpp
-)
-
-ament_target_dependencies(motor_debug_node
-    rclcpp
-    std_msgs
-    sensor_msgs
 )
 
 # ========================== Install ==========================
 
 install(TARGETS deploy_node motor_debug_node
-    DESTINATION lib/${PROJECT_NAME}
+    RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 # Install Unitree SDK shared library alongside the executable
 install(FILES ${UNITREE_SDK_LIB}
-    DESTINATION lib/${PROJECT_NAME}
+    DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
 
 install(DIRECTORY launch/
-    DESTINATION share/${PROJECT_NAME}/launch
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
     OPTIONAL
 )
 
 install(DIRECTORY policy/
-    DESTINATION share/${PROJECT_NAME}/policy
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/policy
     OPTIONAL
 )
 
 install(DIRECTORY robot/
-    DESTINATION share/${PROJECT_NAME}/robot
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/robot
     OPTIONAL
 )
 
 install(DIRECTORY config/
-    DESTINATION share/${PROJECT_NAME}/config
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
     OPTIONAL
 )
 
 install(DIRECTORY sim/
-    DESTINATION share/${PROJECT_NAME}/sim
+    DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/sim
     OPTIONAL
 )
-
-# ========================== Package ==========================
-
-ament_package()

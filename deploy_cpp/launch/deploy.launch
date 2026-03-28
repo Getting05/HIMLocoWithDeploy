@@ -1,0 +1,18 @@
+<!-- Launch file for deploy_cpp deploy_node (ROS1 Noetic) -->
+<launch>
+    <arg name="robot_config_file" default="$(find deploy_cpp)/config/robots/mybot.yaml"
+         doc="Path to robot runtime yaml config" />
+    <arg name="debug_no_motor" default="false"
+         doc="Use fake motor driver for testing" />
+    <arg name="sim_mode" default="false"
+         doc="Use MuJoCo bridge topic motor driver" />
+    <arg name="sim_pingpong_mode" default="false"
+         doc="Enable state-triggered ping-pong control timing in deploy_node" />
+
+    <node pkg="deploy_cpp" type="deploy_node" name="deploy_node" output="screen">
+        <param name="robot_config_file" value="$(arg robot_config_file)" />
+        <param name="debug_no_motor" value="$(arg debug_no_motor)" />
+        <param name="sim_mode" value="$(arg sim_mode)" />
+        <param name="sim_pingpong_mode" value="$(arg sim_pingpong_mode)" />
+    </node>
+</launch>

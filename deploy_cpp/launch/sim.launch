@@ -1,0 +1,44 @@
+<!-- Launch file for MuJoCo simulation mode (ROS1 Noetic)
+
+Starts the C++ deploy_node in sim_mode, which communicates with
+the Python MuJoCo simulation node via ROS1 topics.
+
+NOTE: The Python MuJoCo sim node must be started separately:
+  python3 sim/mujoco_sim_node.py
+
+Usage (terminal 1 - MuJoCo sim):
+  cd ~/noetic/HIMLocoWithDeploy/deploy_cpp
+  python3 sim/mujoco_sim_node.py
+
+Usage (terminal 2 - deploy_node):
+  source ~/noetic/devel/setup.bash
+  roslaunch deploy_cpp sim.launch
+-->
+<launch>
+    <arg name="robot_config_file"
+         default="$(find deploy_cpp)/config/robots/mybot.yaml"
+         doc="Path to robot runtime yaml config" />
+    <arg name="sim_pingpong_mode" default="false"
+         doc="Enable state-triggered ping-pong control timing in deploy_node" />
+
+    <!-- Deploy node in simulation mode -->
+    <node pkg="deploy_cpp" type="deploy_node" name="deploy_node" output="screen">
+        <param name="robot_config_file" value="$(arg robot_config_file)" />
+        <param name="sim_mode" value="true" />
+        <param name="sim_pingpong_mode" value="$(arg sim_pingpong_mode)" />
+        <param name="debug_no_motor" value="false" />
+    </node>
+
+    <!-- Robot state publisher (for RViz) -->
+    <!-- NOTE: urdf_relpath must be set in the YAML config file.
+         For sim.launch we load robot_description from the YAML-specified urdf_relpath.
+         User should ensure robot_description param is set, e.g. via:
+           rosparam set robot_description "$(cat $(find deploy_cpp)/robot/mybot_v2/urdf/mybot_v2.urdf)"
+         Or uncomment the following lines with the correct URDF path: -->
+    <!--
+    <param name="robot_description"
+           textfile="$(find deploy_cpp)/robot/mybot_v2/urdf/mybot_v2.urdf" />
+    <node pkg="robot_state_publisher" type="robot_state_publisher"
+          name="robot_state_publisher" output="screen" />
+    -->
+</launch>
