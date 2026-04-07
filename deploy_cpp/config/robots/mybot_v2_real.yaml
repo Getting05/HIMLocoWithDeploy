@@ -85,7 +85,7 @@ motor_is_reversed: [false, false, true, false, true, false, true, false, true, t
 hip_indices: [0, 3, 6, 9]
 wheel_indices: []
 
-policy_path: /home/getting/humble/Quadruped/HIMLoco/deploy_cpp/policy/policy.pt
+policy_path: /home/pangolin/HIMLocoWithDeploy/catkin_ws/src/deploy_cpp/policy/policy.pt
 device: cuda:0
 port0: /dev/ttyUSB1
 port1: /dev/ttyUSB0

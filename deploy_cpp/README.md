@@ -178,28 +178,35 @@ cd ~/catkin_ws
 source /opt/ros/noetic/setup.bash
 
 # 编译代码
-catkin_make --pkg deploy_cpp -DTorch_DIR=/opt/libtorch/share/cmake/Torch
+catkin_make \
+-DCMAKE_CXX_STANDARD=14 \
+-DCMAKE_CUDA_STANDARD=14 \
+-DTORCH_CUDA_ARCH_LIST="7.2" \
+-DCMAKE_DISABLE_FIND_PACKAGE_CUDNN=TRUE \
+-DTorch_DIR=/home/pangolin/.local/lib/python3.8/site-packages/torch/share/cmake/Torch \
+--pkg deploy_cpp
+
 
 # 刷新环境变量即可使用
 source devel/setup.bash
 
 ```
 
-```bash
-# 假设你的工作空间是 ~/catkin_ws
-cd ~/catkin_ws
-source /opt/ros/noetic/setup.bash
-
-# 编译该包并传入 LibTorch 路径
-catkin_make --pkg deploy_cpp \
-  -DTorch_DIR=/opt/libtorch/share/cmake/Torch
-
-# 刷新环境变量
-source devel/setup.bash
 ```
-export LD_LIBRARY_PATH=/home/getting/miniconda3/envs/himloco/lib:$LD_LIBRARY_PATH
-## 运行
+# load path
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(rospack find deploy_cpp)/lib
 
+# 找到你电脑里真实的 torch lib 路径
+TORCH_LIB=$(python3 -c 'import torch; print(torch.__path__[0] + "/lib")')
+
+# 把所有依赖库一次性加入环境变量
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(rospack find deploy_cpp)/lib:$TORCH_LIB
+
+```
+## 运行
+```
+roscore
+```
 ### A. 真机（推荐 launch）
 
 ```bash
