@@ -66,8 +66,8 @@ wheel_indices: []
 
 policy_path: /home/pangolin/HIMLocoWithDeploy/catkin_ws/src/deploy_cpp/policy/policy.pt
 device: cuda:0
-port0: /dev/motor_front
-port1: /dev/motor_rear
+port0: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT7FHAK3-if00-port0
+port1: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT6SV658-if00-port0
 imu_topic: /fast_livo2/state6_imu_prop
 robot_name: mybot_v2_sim
 urdf_relpath: robot/mybot_v2/urdf/mybot_v2.urdf
