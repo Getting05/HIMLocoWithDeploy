@@ -37,6 +37,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joy.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 
 #include "imu_subscriber.h"
 #include "keyboard_controller.h"
@@ -483,6 +484,8 @@ private:
         [this](const sensor_msgs::msg::Joy::SharedPtr msg) {
           handle_joy_msg(msg);
         });
+    suction_pub_ = this->create_publisher<std_msgs::msg::UInt8>(
+        "/suction_action", 10);
     RCLCPP_INFO(this->get_logger(),
                 "Joystick teleop enabled: topic=%s deadzone=%.2f timeout=%.2fs",
                 config_.joy_topic.c_str(), config_.joy_axis_deadzone,
@@ -574,6 +577,17 @@ private:
 
     if (rising(config_.joy_button_confirm)) {
       joy_step_confirmed_ = true;
+    }
+
+    if (rising(config_.joy_button_suction_stand)) {
+      std_msgs::msg::UInt8 suction_msg;
+      suction_msg.data = 1;  // ACTION_STAND_SUCTION
+      suction_pub_->publish(suction_msg);
+    }
+    if (rising(config_.joy_button_suction_lie)) {
+      std_msgs::msg::UInt8 suction_msg;
+      suction_msg.data = 2;  // ACTION_LIE_SUCTION
+      suction_pub_->publish(suction_msg);
     }
 
     joy_prev_buttons_.assign(msg->buttons.begin(), msg->buttons.end());
@@ -1153,6 +1167,7 @@ private:
   std::unique_ptr<StateMachine> sm_;
   std::unique_ptr<RobotVisualizer> visualizer_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_sub_;
+  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr suction_pub_;
 
   std::string rl_joint_csv_path_;
   int rl_joint_csv_flush_interval_ = 50;

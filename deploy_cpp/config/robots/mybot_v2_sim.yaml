@@ -34,7 +34,7 @@ joint_transmission_ratio: [6.33, 6.33, 14.77, 6.33, 6.33, 14.77, 6.33, 6.33, 14.
 
 # ---- 关节角度 (全部按 Policy DOF 顺序: FL, FR, RL, RR) ----
 #                         FL_hip FL_th FL_cf  FR_hip FR_th FR_cf  RL_hip RL_th RL_cf  RR_hip RR_th  RR_cf
-default_dof_pos:       [  0.35, 0.99, -2.57, -0.35, 0.99, -2.57,  0.35, 0.99, -2.57, -0.35, 0.99, -2.57]
+default_dof_pos:       [  0.35, 1.1, -2.65, -0.35, 1.1, -2.65,  0.35, 1.1, -2.65, -0.35, 1.1, -2.65]
 # FR_hip=0.327 FR_thigh=0.980 FR_calf=-2.568FL_hip=-0.327 FL_thigh=0.980 FL_calf=-2.568
 # RR_hip=0.327 RR_thigh=0.980 RR_calf=-2.568RL_hip=-0.327 RL_thigh=0.980 RL_calf=-2.568
 standup_target_pos:    [  0.1,  0.8,  -1.5,  -0.1,  0.8,  -1.5,   0.1,  1.0,  -1.5,  -0.1,  1.0,  -1.5 ]

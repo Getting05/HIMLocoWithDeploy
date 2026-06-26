@@ -146,6 +146,8 @@ struct RobotRuntimeConfig {
   int joy_button_idle = 6;
   int joy_button_confirm = 7;
   int joy_button_emergency = 8;
+  int joy_button_suction_stand = 7;
+  int joy_button_suction_lie = 9;
 
   // ---- 便捷函数 ----
   float motor_kp(int joint_idx) const {

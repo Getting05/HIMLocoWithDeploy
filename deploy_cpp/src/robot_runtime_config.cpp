@@ -416,6 +416,12 @@ RobotRuntimeConfig load_robot_runtime_config(const std::string &yaml_file) {
   if (root["joy_button_emergency"]) {
     cfg.joy_button_emergency = root["joy_button_emergency"].as<int>();
   }
+  if (root["joy_button_suction_stand"]) {
+    cfg.joy_button_suction_stand = root["joy_button_suction_stand"].as<int>();
+  }
+  if (root["joy_button_suction_lie"]) {
+    cfg.joy_button_suction_lie = root["joy_button_suction_lie"].as<int>();
+  }
 
   auto validate_index = [](int value, const std::string &key) {
     if (value < -1) {
@@ -436,6 +442,8 @@ RobotRuntimeConfig load_robot_runtime_config(const std::string &yaml_file) {
   validate_index(cfg.joy_button_idle, "joy_button_idle");
   validate_index(cfg.joy_button_confirm, "joy_button_confirm");
   validate_index(cfg.joy_button_emergency, "joy_button_emergency");
+  validate_index(cfg.joy_button_suction_stand, "joy_button_suction_stand");
+  validate_index(cfg.joy_button_suction_lie, "joy_button_suction_lie");
 
   if (cfg.joy_axis_deadzone < 0.0f || cfg.joy_axis_deadzone >= 1.0f) {
     throw std::runtime_error("joy_axis_deadzone must be in [0, 1)");
