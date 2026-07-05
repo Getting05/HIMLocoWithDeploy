@@ -8,6 +8,7 @@
 - 单个 policy 的完整 YAML 示例：
   - `deploy_cpp/config/robots/mybot_v2_real.yaml`
   - `deploy_cpp/config/robots/mybot_stair.yaml`
+  - `deploy_cpp/config/robots/mybot_crawl.yaml`
 - 主要实现：
   - `deploy_cpp/src/policy_profile_manager.cpp`
   - `deploy_cpp/src/deploy_node.cpp`
@@ -27,6 +28,11 @@ profiles:
     name: stair
     config_file: ../robots/mybot_stair.yaml
     joy_button: 11
+
+  - id: crawl
+    name: crawl
+    config_file: ../robots/mybot_crawl.yaml
+    joy_button: 12
 ```
 
 字段含义：

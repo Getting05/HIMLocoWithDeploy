@@ -22,8 +22,7 @@ profiles:
     config_file: ../robots/mybot_stair.yaml
     joy_button: 11
 
-  # 创建完整趴着走 YAML 和对应 policy 文件后，再取消下面注释。
-  # - id: crawl
-  #   name: crawl
-  #   config_file: ../robots/mybot_crawl.yaml
-  #   joy_button: 12
+  - id: crawl
+    name: crawl
+    config_file: ../robots/mybot_crawl.yaml
+    joy_button: 12
