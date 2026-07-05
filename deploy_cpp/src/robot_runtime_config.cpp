@@ -8,6 +8,9 @@
 
 #include "robot_runtime_config.h"
 
+#include <cmath>
+#include <filesystem>
+#include <sstream>
 #include <stdexcept>
 
 #include <yaml-cpp/yaml.h>
@@ -63,7 +66,110 @@ void validate_positive_array(const std::array<float, NUM_JOINTS> &vals,
   }
 }
 
+std::filesystem::path normalize_path(const std::filesystem::path &path) {
+  return path.lexically_normal();
+}
+
+template <typename T, size_t N>
+void require_equal_array(const std::array<T, N> &base,
+                         const std::array<T, N> &candidate,
+                         const std::string &field,
+                         const std::string &base_name,
+                         const std::string &candidate_name) {
+  for (size_t i = 0; i < N; ++i) {
+    if (base[i] != candidate[i]) {
+      std::ostringstream oss;
+      oss << "Profile hardware mismatch on " << field << "[" << i << "]: "
+          << base_name << " != " << candidate_name;
+      throw std::runtime_error(oss.str());
+    }
+  }
+}
+
+template <size_t N>
+void require_near_array(const std::array<float, N> &base,
+                        const std::array<float, N> &candidate,
+                        const std::string &field,
+                        const std::string &base_name,
+                        const std::string &candidate_name,
+                        float eps = 1e-5f) {
+  for (size_t i = 0; i < N; ++i) {
+    if (std::fabs(base[i] - candidate[i]) > eps) {
+      std::ostringstream oss;
+      oss << "Profile hardware mismatch on " << field << "[" << i << "]: "
+          << base_name << " != " << candidate_name;
+      throw std::runtime_error(oss.str());
+    }
+  }
+}
+
+void require_equal_string(const std::string &base, const std::string &candidate,
+                          const std::string &field,
+                          const std::string &base_name,
+                          const std::string &candidate_name) {
+  if (base != candidate) {
+    throw std::runtime_error("Profile hardware mismatch on " + field + ": " +
+                             base_name + " != " + candidate_name);
+  }
+}
+
 } // namespace
+
+std::string resolve_path_from_file(const std::string &anchor_file,
+                                   const std::string &path_value) {
+  if (path_value.empty()) {
+    return path_value;
+  }
+
+  std::filesystem::path p(path_value);
+  if (p.is_absolute() || path_value.front() == '/' ||
+      path_value.front() == '\\') {
+    return normalize_path(p).string();
+  }
+
+  std::filesystem::path anchor(anchor_file);
+  std::filesystem::path base_dir = anchor.has_parent_path()
+                                       ? anchor.parent_path()
+                                       : std::filesystem::current_path();
+  return normalize_path(base_dir / p).string();
+}
+
+std::string resolve_existing_path_from_file(const std::string &anchor_file,
+                                            const std::string &path_value) {
+  if (path_value.empty()) {
+    return path_value;
+  }
+
+  std::filesystem::path p(path_value);
+  if (p.is_absolute() || path_value.front() == '/' ||
+      path_value.front() == '\\') {
+    return normalize_path(p).string();
+  }
+
+  std::error_code ec;
+  if (std::filesystem::exists(p, ec)) {
+    return normalize_path(p).string();
+  }
+
+  std::filesystem::path anchor(anchor_file);
+  std::filesystem::path dir = anchor.has_parent_path()
+                                  ? anchor.parent_path()
+                                  : std::filesystem::current_path();
+  while (!dir.empty()) {
+    std::filesystem::path candidate = dir / p;
+    ec.clear();
+    if (std::filesystem::exists(candidate, ec)) {
+      return normalize_path(candidate).string();
+    }
+    const auto parent = dir.parent_path();
+    if (parent == dir) {
+      break;
+    }
+    dir = parent;
+  }
+
+  return resolve_path_from_file(anchor_file, path_value);
+}
 
 // ============================================================
 //  默认配置 (兜底值，正常运行时应始终由 YAML 覆盖)
@@ -247,7 +353,9 @@ RobotRuntimeConfig load_robot_runtime_config(const std::string &yaml_file) {
   cfg.mujoco_xml_relpath = root["mujoco_xml_relpath"].as<std::string>();
   cfg.isaac_xml_relpath = root["isaac_xml_relpath"].as<std::string>();
   if (root["policy_path"]) {
-    cfg.policy_path = root["policy_path"].as<std::string>();
+    cfg.policy_path =
+        resolve_existing_path_from_file(yaml_file,
+                                        root["policy_path"].as<std::string>());
   }
 
   // ---- PD 控制参数 ----
@@ -456,6 +564,49 @@ RobotRuntimeConfig load_robot_runtime_config(const std::string &yaml_file) {
   }
 
   return cfg;
+}
+
+void validate_robot_runtime_compatible(const RobotRuntimeConfig &base,
+                                       const RobotRuntimeConfig &candidate,
+                                       const std::string &base_name,
+                                       const std::string &candidate_name) {
+  if (base.num_of_dofs != candidate.num_of_dofs) {
+    throw std::runtime_error("Profile hardware mismatch on num_of_dofs: " +
+                             base_name + " != " + candidate_name);
+  }
+
+  require_equal_array(base.joint_names, candidate.joint_names, "joint_names",
+                      base_name, candidate_name);
+  require_equal_array(base.joint_controller_names,
+                      candidate.joint_controller_names,
+                      "joint_controller_names", base_name, candidate_name);
+  require_equal_array(base.joint_mapping, candidate.joint_mapping,
+                      "joint_mapping", base_name, candidate_name);
+  require_equal_array(base.motor_is_reversed, candidate.motor_is_reversed,
+                      "motor_is_reversed", base_name, candidate_name);
+  require_near_array(base.joint_transmission_ratio,
+                     candidate.joint_transmission_ratio,
+                     "joint_transmission_ratio", base_name, candidate_name);
+  require_equal_string(base.port0, candidate.port0, "port0", base_name,
+                       candidate_name);
+  require_equal_string(base.port1, candidate.port1, "port1", base_name,
+                       candidate_name);
+  require_equal_string(base.imu_topic, candidate.imu_topic, "imu_topic",
+                       base_name, candidate_name);
+  require_equal_string(base.urdf_relpath, candidate.urdf_relpath,
+                       "urdf_relpath", base_name, candidate_name);
+  require_equal_string(base.mujoco_xml_relpath, candidate.mujoco_xml_relpath,
+                       "mujoco_xml_relpath", base_name, candidate_name);
+  require_equal_string(base.isaac_xml_relpath, candidate.isaac_xml_relpath,
+                       "isaac_xml_relpath", base_name, candidate_name);
+  if (std::fabs(base.control_dt - candidate.control_dt) > 1e-6f) {
+    throw std::runtime_error("Profile hardware mismatch on control_dt: " +
+                             base_name + " != " + candidate_name);
+  }
+  require_near_array(base.joint_pos_lower, candidate.joint_pos_lower,
+                     "joint_pos_lower", base_name, candidate_name);
+  require_near_array(base.joint_pos_upper, candidate.joint_pos_upper,
+                     "joint_pos_upper", base_name, candidate_name);
 }
 
 } // namespace deploy

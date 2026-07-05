@@ -60,6 +60,12 @@ public:
   /// Current state.
   RobotState state() const { return state_; }
 
+  /// Refresh pose targets and durations after the active policy profile changes.
+  void update_config(const RobotRuntimeConfig &config);
+
+  /// Internal forced transition for completed externally-managed safe motions.
+  void force_transition(RobotState target);
+
   /// Whether standup interpolation is complete.
   bool standup_complete() const { return standup_complete_; }
 

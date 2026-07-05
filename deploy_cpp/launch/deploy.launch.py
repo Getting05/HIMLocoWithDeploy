@@ -16,6 +16,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('robot_config_file', default_value=default_cfg,
                               description='Path to robot runtime yaml config'),
+        DeclareLaunchArgument('policy_profiles_file', default_value='',
+                              description='Optional multi-policy profile list yaml'),
         DeclareLaunchArgument('debug_no_motor', default_value='false',
                               description='Use fake motor driver for testing'),
         DeclareLaunchArgument('sim_mode', default_value='false',
@@ -36,6 +38,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'robot_config_file': LaunchConfiguration('robot_config_file'),
+                'policy_profiles_file': LaunchConfiguration('policy_profiles_file'),
                 'debug_no_motor': LaunchConfiguration('debug_no_motor'),
                 'sim_mode': LaunchConfiguration('sim_mode'),
                 'sim_pingpong_mode': LaunchConfiguration('sim_pingpong_mode'),

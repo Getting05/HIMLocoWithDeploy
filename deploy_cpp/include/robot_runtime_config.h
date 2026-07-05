@@ -163,5 +163,13 @@ struct RobotRuntimeConfig {
 
 RobotRuntimeConfig default_robot_runtime_config();
 RobotRuntimeConfig load_robot_runtime_config(const std::string &yaml_file);
+std::string resolve_path_from_file(const std::string &anchor_file,
+                                   const std::string &path_value);
+std::string resolve_existing_path_from_file(const std::string &anchor_file,
+                                            const std::string &path_value);
+void validate_robot_runtime_compatible(const RobotRuntimeConfig &base,
+                                       const RobotRuntimeConfig &candidate,
+                                       const std::string &base_name,
+                                       const std::string &candidate_name);
 
 } // namespace deploy

@@ -58,6 +58,12 @@ public:
     /// Get current velocity commands [vx, vy, yaw_rate].
     std::array<float, 3> get_commands() const;
 
+    /// Refresh velocity limits/steps after the active policy profile changes.
+    void update_config(const RobotRuntimeConfig& config);
+
+    /// Clear all keyboard velocity commands.
+    void reset_commands();
+
     /// Consume and return pending state transition request (if any).
     std::optional<StateRequest> consume_state_request();
 

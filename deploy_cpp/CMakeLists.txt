@@ -46,6 +46,7 @@ set(SOURCES
     src/motor_driver.cpp
     src/imu_subscriber.cpp
     src/policy_runner.cpp
+    src/policy_profile_manager.cpp
     src/keyboard_controller.cpp
     src/udp_controller.cpp
     src/state_machine.cpp

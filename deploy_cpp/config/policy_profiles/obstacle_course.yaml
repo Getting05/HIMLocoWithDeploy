@@ -1,0 +1,29 @@
+# Multi-policy profile list for obstacle-course deployment.
+#
+# Each profile points to a complete robot YAML. The complete YAML owns:
+# policy_path, policy_dof_pos, standup_target_pos, action_scale, PD gains,
+# command limits, and the default posture for that policy.
+#
+# All enabled profiles must share the same hardware mapping, ports, model paths,
+# joint limits, and control_dt. The deploy node validates this at startup.
+#
+# joy_button indices come from sensor_msgs/Joy.buttons.
+
+initial_profile: walk
+
+profiles:
+  - id: walk
+    name: normal_walk
+    config_file: ../robots/mybot_v2_real.yaml
+    joy_button: 10
+
+  - id: stair
+    name: stair
+    config_file: ../robots/mybot_stair.yaml
+    joy_button: 11
+
+  # Add the crawl profile after creating the complete YAML and policy file.
+  # - id: crawl
+  #   name: crawl
+  #   config_file: ../robots/mybot_crawl.yaml
+  #   joy_button: 12

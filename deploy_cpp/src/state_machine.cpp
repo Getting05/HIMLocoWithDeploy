@@ -20,6 +20,16 @@ StateMachine::StateMachine(const RobotRuntimeConfig &config) {
   standup_duration_ = config.standup_duration;
 }
 
+void StateMachine::update_config(const RobotRuntimeConfig &config) {
+  standup_target_pos_ = config.standup_target_pos;
+  default_dof_pos_ = config.default_dof_pos;
+  standup_duration_ = config.standup_duration;
+}
+
+void StateMachine::force_transition(RobotState target) {
+  enter_state(target);
+}
+
 bool StateMachine::is_valid_transition(RobotState from, RobotState to) const {
   // Valid transitions (not including emergency IDLE which is always allowed)
   switch (from) {

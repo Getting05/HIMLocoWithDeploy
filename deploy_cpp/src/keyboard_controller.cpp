@@ -179,6 +179,21 @@ std::array<float, 3> KeyboardController::get_commands() const
     return {vx_, vy_, yaw_};
 }
 
+void KeyboardController::update_config(const RobotRuntimeConfig& config)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    config_ = config;
+    vx_ = std::clamp(vx_, config_.cmd_vx_min, config_.cmd_vx_max);
+    vy_ = std::clamp(vy_, config_.cmd_vy_min, config_.cmd_vy_max);
+    yaw_ = std::clamp(yaw_, config_.cmd_yaw_min, config_.cmd_yaw_max);
+}
+
+void KeyboardController::reset_commands()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    zero_commands();
+}
+
 std::optional<StateRequest> KeyboardController::consume_state_request()
 {
     std::lock_guard<std::mutex> lock(mutex_);

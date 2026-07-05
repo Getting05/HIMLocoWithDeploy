@@ -42,6 +42,7 @@
 #include "imu_subscriber.h"
 #include "keyboard_controller.h"
 #include "motor_driver.h"
+#include "policy_profile_manager.h"
 #include "policy_runner.h"
 #include "udp_controller.h"
 
@@ -237,6 +238,7 @@ public:
   DeployNode() : Node("deploy_node") {
     // Declare parameters
     this->declare_parameter<std::string>("robot_config_file", "");
+    this->declare_parameter<std::string>("policy_profiles_file", "");
     this->declare_parameter<bool>("debug_no_motor", false);
     this->declare_parameter<bool>("sim_mode", false);
     this->declare_parameter<bool>("sim_pingpong_mode", false);
@@ -247,10 +249,20 @@ public:
 
   void initialize() {
     auto config_file = this->get_parameter("robot_config_file").as_string();
-    if (config_file.empty()) {
-      throw std::runtime_error("robot_config_file is required");
+    auto profiles_file =
+        this->get_parameter("policy_profiles_file").as_string();
+    profile_manager_ = std::make_unique<PolicyProfileManager>();
+    if (!profiles_file.empty()) {
+      profile_manager_->load_from_file(profiles_file);
+    } else {
+      if (config_file.empty()) {
+        throw std::runtime_error(
+            "robot_config_file is required when policy_profiles_file is empty");
+      }
+      profile_manager_->load_single_profile(config_file);
     }
-    config_ = load_robot_runtime_config(config_file);
+
+    set_active_profile(profile_manager_->initial_profile(), false);
     build_dof_permutation();
 
     debug_no_motor_ = this->get_parameter("debug_no_motor").as_bool();
@@ -300,9 +312,9 @@ public:
 
     initialize_rl_joint_csv_logging();
 
-    // ---- Policy runner ----
-    policy_ = std::make_unique<PolicyRunner>(config_.policy_path, config_);
-    RCLCPP_INFO(this->get_logger(), "Policy runner initialized");
+    RCLCPP_INFO(this->get_logger(),
+                "Policy profile initialized: id=%s name=%s",
+                active_profile_id_.c_str(), active_profile_name_.c_str());
 
     // ---- Keyboard controller ----
     keyboard_ = std::make_unique<KeyboardController>(config_);
@@ -405,29 +417,39 @@ public:
         handle_pending_state_request(joy_req.value());
       }
 
+      // 2d. Handle joystick policy-profile switching
+      auto joy_profile_req = consume_joy_profile_request();
+      if (joy_profile_req.has_value()) {
+        start_profile_switch(joy_profile_req.value());
+      }
+
       // 3. Execute current state logic
-      switch (sm_->state()) {
-      case RobotState::IDLE:
-        handle_idle();
-        break;
-      case RobotState::STAND_UP:
-        handle_standup();
-        break;
-      case RobotState::RL:
-        handle_rl();
-        break;
-      case RobotState::JOINT_DAMPING:
-        handle_joint_damping();
-        break;
-      case RobotState::RETURN_DEFAULT:
-        handle_return_default();
-        break;
-      case RobotState::JOINT_SWEEP:
-        handle_joint_sweep();
-        break;
-      case RobotState::SINGLE_STEP_RL:
-        handle_single_step_rl();
-        break;
+      if (profile_switch_active_) {
+        handle_profile_switch();
+      } else {
+        switch (sm_->state()) {
+        case RobotState::IDLE:
+          handle_idle();
+          break;
+        case RobotState::STAND_UP:
+          handle_standup();
+          break;
+        case RobotState::RL:
+          handle_rl();
+          break;
+        case RobotState::JOINT_DAMPING:
+          handle_joint_damping();
+          break;
+        case RobotState::RETURN_DEFAULT:
+          handle_return_default();
+          break;
+        case RobotState::JOINT_SWEEP:
+          handle_joint_sweep();
+          break;
+        case RobotState::SINGLE_STEP_RL:
+          handle_single_step_rl();
+          break;
+        }
       }
 
       // 3.5. Publish joint states for RViz visualization
@@ -477,6 +499,130 @@ private:
     return policy_vals;
   }
 
+  const char *display_state_name() const {
+    return profile_switch_active_ ? "SWITCH_PROFILE"
+                                  : robot_state_name(sm_->state());
+  }
+
+  void set_active_profile(PolicyProfile &profile, bool reset_policy) {
+    config_ = profile.config;
+    policy_ = profile.runner.get();
+    active_profile_id_ = profile.id;
+    active_profile_name_ = profile.name;
+
+    if (reset_policy && policy_) {
+      policy_->reset();
+      rl_joint_csv_time_ready_ = false;
+    }
+    if (sm_) {
+      sm_->update_config(config_);
+    }
+    if (keyboard_) {
+      keyboard_->update_config(config_);
+    }
+
+    last_safe_target_ = reorder_policy_to_driver(config_.policy_dof_pos);
+    sweep_last_sent_ = reorder_policy_to_driver(config_.standup_target_pos);
+    sweep_has_sent_ = false;
+  }
+
+  void zero_all_commands() {
+    udp_vx_ = 0.0f;
+    udp_vy_ = 0.0f;
+    udp_yaw_ = 0.0f;
+    if (keyboard_) {
+      keyboard_->reset_commands();
+    }
+    {
+      std::lock_guard<std::mutex> lock(joy_mutex_);
+      zero_joy_commands_locked();
+    }
+  }
+
+  void start_profile_switch(const std::string &profile_id) {
+    if (!profile_manager_ || !profile_manager_->multi_profile_enabled()) {
+      RCLCPP_WARN(this->get_logger(),
+                  "Ignoring profile switch '%s': profile manager disabled",
+                  profile_id.c_str());
+      return;
+    }
+
+    PolicyProfile *target = profile_manager_->profile_by_id(profile_id);
+    if (!target) {
+      RCLCPP_WARN(this->get_logger(),
+                  "Ignoring unknown policy profile: %s", profile_id.c_str());
+      return;
+    }
+
+    if (!profile_switch_active_ && target->id == active_profile_id_ &&
+        sm_->state() == RobotState::RL) {
+      RCLCPP_INFO(this->get_logger(),
+                  "Policy profile '%s' already active in RL; ignoring",
+                  target->id.c_str());
+      return;
+    }
+
+    zero_all_commands();
+    arm_joy_neutral_gate();
+    if (sm_->state() == RobotState::RL) {
+      flush_rl_joint_csv();
+    }
+
+    profile_switch_target_ = target;
+    profile_switch_start_pos_ = reorder_driver_to_policy(get_dof_pos());
+    profile_switch_start_time_ = std::chrono::steady_clock::now();
+    profile_switch_active_ = true;
+    profile_switch_announced_ = false;
+    single_step_pending_ = false;
+    single_step_count_ = 0;
+
+    sm_->force_transition(RobotState::STAND_UP);
+    RCLCPP_INFO(this->get_logger(),
+                "Switching policy profile: %s -> %s (%s)",
+                active_profile_id_.c_str(), target->id.c_str(),
+                target->name.c_str());
+  }
+
+  void handle_profile_switch() {
+    if (!profile_switch_target_) {
+      profile_switch_active_ = false;
+      return;
+    }
+
+    const auto &target_cfg = profile_switch_target_->config;
+    const auto now = std::chrono::steady_clock::now();
+    const float elapsed =
+        std::chrono::duration<float>(now - profile_switch_start_time_).count();
+    const float duration = std::max(target_cfg.standup_duration, 0.001f);
+    const float alpha = std::clamp(elapsed / duration, 0.0f, 1.0f);
+
+    std::array<float, NUM_JOINTS> target_policy{};
+    for (int i = 0; i < NUM_JOINTS; ++i) {
+      target_policy[i] = profile_switch_start_pos_[i] * (1.0f - alpha) +
+                         target_cfg.policy_dof_pos[i] * alpha;
+    }
+    auto target_driver = reorder_policy_to_driver(target_policy);
+    send_to_motors(target_driver, target_cfg.kp_joint, target_cfg.kd_joint);
+
+    if (alpha >= 1.0f) {
+      PolicyProfile *completed = profile_switch_target_;
+      set_active_profile(*completed, true);
+      profile_switch_active_ = false;
+      profile_switch_target_ = nullptr;
+      last_safe_target_ = target_driver;
+      arm_joy_neutral_gate();
+      sm_->force_transition(RobotState::RL);
+      RCLCPP_INFO(this->get_logger(),
+                  "Policy profile active: id=%s name=%s; entered RL",
+                  active_profile_id_.c_str(), active_profile_name_.c_str());
+    } else if (!profile_switch_announced_) {
+      profile_switch_announced_ = true;
+      RCLCPP_INFO(this->get_logger(),
+                  "Moving to profile '%s' pose over %.2fs",
+                  profile_switch_target_->id.c_str(), duration);
+    }
+  }
+
   void setup_joy_subscriber() {
     rclcpp::SensorDataQoS qos;
     joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>(
@@ -523,6 +669,15 @@ private:
     return raw >= 0.0f ? raw * max_value : -raw * min_value;
   }
 
+  bool joy_axes_are_neutral(const sensor_msgs::msg::Joy &msg) const {
+    const float vx = read_joy_axis(msg, config_.joy_axis_vx);
+    const float vy = read_joy_axis(msg, config_.joy_axis_vy);
+    const float yaw = read_joy_axis(msg, config_.joy_axis_yaw);
+    return std::fabs(vx) < config_.joy_axis_deadzone &&
+           std::fabs(vy) < config_.joy_axis_deadzone &&
+           std::fabs(yaw) < config_.joy_axis_deadzone;
+  }
+
   void zero_joy_commands_locked() {
     joy_cmd_.fill(0.0f);
   }
@@ -533,15 +688,25 @@ private:
     joy_last_msg_time_ = std::chrono::steady_clock::now();
     joy_has_msg_ = true;
 
-    joy_cmd_[0] = scale_joy_axis(
+    std::array<float, 3> scaled_cmd{};
+    scaled_cmd[0] = scale_joy_axis(
         read_joy_axis(*msg, config_.joy_axis_vx), config_.joy_invert_vx,
         config_.cmd_vx_min, config_.cmd_vx_max);
-    joy_cmd_[1] = scale_joy_axis(
+    scaled_cmd[1] = scale_joy_axis(
         read_joy_axis(*msg, config_.joy_axis_vy), config_.joy_invert_vy,
         config_.cmd_vy_min, config_.cmd_vy_max);
-    joy_cmd_[2] = scale_joy_axis(
+    scaled_cmd[2] = scale_joy_axis(
         read_joy_axis(*msg, config_.joy_axis_yaw), config_.joy_invert_yaw,
         config_.cmd_yaw_min, config_.cmd_yaw_max);
+
+    if (joy_wait_neutral_) {
+      if (joy_axes_are_neutral(*msg)) {
+        joy_wait_neutral_ = false;
+      }
+      zero_joy_commands_locked();
+    } else {
+      joy_cmd_ = scaled_cmd;
+    }
 
     auto rising = [this, &msg](int button_idx) {
       return joy_button_down(*msg, button_idx) &&
@@ -553,6 +718,18 @@ private:
       zero_joy_commands_locked();
       joy_prev_buttons_.assign(msg->buttons.begin(), msg->buttons.end());
       return;
+    }
+
+    if (profile_manager_ && profile_manager_->multi_profile_enabled()) {
+      for (const auto &profile : profile_manager_->profiles()) {
+        if (rising(profile.joy_button)) {
+          joy_profile_request_ = profile.id;
+          joy_wait_neutral_ = true;
+          zero_joy_commands_locked();
+          joy_prev_buttons_.assign(msg->buttons.begin(), msg->buttons.end());
+          return;
+        }
+      }
     }
 
     if (rising(config_.joy_button_stand_up)) {
@@ -598,6 +775,19 @@ private:
     auto req = joy_state_request_;
     joy_state_request_.reset();
     return req;
+  }
+
+  std::optional<std::string> consume_joy_profile_request() {
+    std::lock_guard<std::mutex> lock(joy_mutex_);
+    auto req = joy_profile_request_;
+    joy_profile_request_.reset();
+    return req;
+  }
+
+  void arm_joy_neutral_gate() {
+    std::lock_guard<std::mutex> lock(joy_mutex_);
+    joy_wait_neutral_ = true;
+    zero_joy_commands_locked();
   }
 
   bool consume_any_step_confirm() {
@@ -675,7 +865,7 @@ private:
       return;
     }
 
-    rl_joint_csv_file_ << "time";
+    rl_joint_csv_file_ << "time,profile_id";
     for (int i = 0; i < NUM_JOINTS; ++i) {
       rl_joint_csv_file_ << ",q_" << i;
     }
@@ -734,7 +924,7 @@ private:
     const auto &dq = motor_->dof_vel();
     const auto &tau = motor_->dof_tau();
 
-    rl_joint_csv_file_ << time_rel;
+    rl_joint_csv_file_ << time_rel << ',' << active_profile_id_;
     for (int i = 0; i < NUM_JOINTS; ++i) {
       rl_joint_csv_file_ << ',' << q[i];
     }
@@ -762,6 +952,16 @@ private:
       RCLCPP_WARN(this->get_logger(), "EMERGENCY STOP!");
     }
 
+    if (profile_switch_active_) {
+      RCLCPP_WARN(this->get_logger(),
+                  "Profile switch to '%s' canceled by state request %s",
+                  profile_switch_target_ ? profile_switch_target_->id.c_str()
+                                         : "unknown",
+                  robot_state_name(req.target));
+      profile_switch_active_ = false;
+      profile_switch_target_ = nullptr;
+    }
+
     RobotState old_state = sm_->state();
     bool accepted = sm_->request_transition(req.target, req.emergency);
 
@@ -779,8 +979,10 @@ private:
       // On entering RL or SingleStepRL, reset policy history
       if (req.target == RobotState::RL ||
           req.target == RobotState::SINGLE_STEP_RL) {
-        policy_->reset();
-        RCLCPP_INFO(this->get_logger(), "Policy history reset");
+        if (policy_) {
+          policy_->reset();
+          RCLCPP_INFO(this->get_logger(), "Policy history reset");
+        }
         if (req.target == RobotState::RL) {
           // Restart relative CSV time at each RL segment.
           rl_joint_csv_time_ready_ = false;
@@ -862,6 +1064,12 @@ private:
   }
 
   void handle_rl() {
+    if (!policy_) {
+      RCLCPP_ERROR(this->get_logger(), "No active policy runner; damping");
+      handle_joint_damping();
+      return;
+    }
+
     // Gather sensor data
     auto ang_vel = imu_->get_ang_vel();
     auto projected_gravity = imu_->get_projected_gravity();
@@ -979,6 +1187,12 @@ private:
   // ------------------------------------------------------------------ //
 
   void handle_single_step_rl() {
+    if (!policy_) {
+      RCLCPP_ERROR(this->get_logger(), "No active policy runner; damping");
+      handle_joint_damping();
+      return;
+    }
+
     // If a step result is pending confirmation, keep sending last safe target
     if (single_step_pending_) {
       send_to_motors(last_safe_target_, config_.kp_joint, config_.kd_joint);
@@ -1108,7 +1322,8 @@ private:
     auto proj_grav = imu_->get_projected_gravity();
 
     std::cout
-        << "\r[" << robot_state_name(sm_->state()) << "] "
+        << "\r[" << display_state_name() << "] "
+        << "profile=" << active_profile_id_ << " "
         << "loop=" << loop_count
         << " imu=" << (imu_->is_ready() ? "OK" : "WAIT") << " cmd=["
         << std::fixed << std::setprecision(2) << commands[0] << ","
@@ -1154,6 +1369,10 @@ private:
   bool enable_rl_joint_csv_param_ = false;
   bool rl_joint_csv_active_ = false;
   RobotRuntimeConfig config_ = default_robot_runtime_config();
+  std::unique_ptr<PolicyProfileManager> profile_manager_;
+  PolicyRunner *policy_ = nullptr;
+  std::string active_profile_id_ = "single";
+  std::string active_profile_name_ = "single";
   std::array<int, NUM_JOINTS> policy_to_driver_idx_{};
   std::array<int, NUM_JOINTS> driver_to_policy_idx_{};
 
@@ -1161,7 +1380,6 @@ private:
   std::unique_ptr<MotorDriver> motor_;
   std::unique_ptr<FakeMotorDriver> fake_motor_;
   std::unique_ptr<MujocoMotorDriver> mujoco_motor_;
-  std::unique_ptr<PolicyRunner> policy_;
   std::unique_ptr<KeyboardController> keyboard_;
   std::unique_ptr<UdpController> udp_ctrl_;
   std::unique_ptr<StateMachine> sm_;
@@ -1189,9 +1407,18 @@ private:
   std::array<float, 3> joy_cmd_{0.0f, 0.0f, 0.0f};
   std::vector<int32_t> joy_prev_buttons_;
   std::optional<StateRequest> joy_state_request_;
+  std::optional<std::string> joy_profile_request_;
   bool joy_step_confirmed_ = false;
   bool joy_has_msg_ = false;
+  bool joy_wait_neutral_ = false;
   std::chrono::steady_clock::time_point joy_last_msg_time_{};
+
+  // ---- Policy profile switch state ----
+  bool profile_switch_active_ = false;
+  bool profile_switch_announced_ = false;
+  PolicyProfile *profile_switch_target_ = nullptr;
+  std::chrono::steady_clock::time_point profile_switch_start_time_{};
+  std::array<float, NUM_JOINTS> profile_switch_start_pos_{};
 
   // ---- JointSweep state ----
   std::array<float, NUM_JOINTS> sweep_last_sent_{};
