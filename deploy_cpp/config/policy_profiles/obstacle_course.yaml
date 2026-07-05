@@ -1,13 +1,13 @@
-# Multi-policy profile list for obstacle-course deployment.
+# 障碍赛多 policy profile 清单示例。
 #
-# Each profile points to a complete robot YAML. The complete YAML owns:
-# policy_path, policy_dof_pos, standup_target_pos, action_scale, PD gains,
-# command limits, and the default posture for that policy.
+# 每个 profile 指向一个完整机器人 YAML。该 YAML 内部负责配置：
+# policy_path、policy_dof_pos、standup_target_pos、action_scale、PD 增益、
+# 速度范围以及该 policy 对应的默认姿态。
 #
-# All enabled profiles must share the same hardware mapping, ports, model paths,
-# joint limits, and control_dt. The deploy node validates this at startup.
+# 所有启用的 profile 必须共享同一套硬件映射、串口、模型路径、
+# 关节限位和 control_dt；deploy_node 会在启动时校验这些硬件不变量。
 #
-# joy_button indices come from sensor_msgs/Joy.buttons.
+# joy_button 索引来自 sensor_msgs/msg/Joy.buttons。
 
 initial_profile: walk
 
@@ -22,7 +22,7 @@ profiles:
     config_file: ../robots/mybot_stair.yaml
     joy_button: 11
 
-  # Add the crawl profile after creating the complete YAML and policy file.
+  # 创建完整趴着走 YAML 和对应 policy 文件后，再取消下面注释。
   # - id: crawl
   #   name: crawl
   #   config_file: ../robots/mybot_crawl.yaml

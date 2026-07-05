@@ -333,6 +333,8 @@ joy_button_emergency: 8
 ### deploy.launch.py
 
 - robot_config_file: 机器人 YAML 路径（必需语义）
+- policy_profiles_file: 可选的多 policy profile 清单 YAML。设置后启用遥控切换多策略；
+  未设置时仍按 `robot_config_file` 单策略模式运行。
 - debug_no_motor: true/false
 - sim_mode: true/false
 - sim_pingpong_mode: true/false
@@ -362,6 +364,18 @@ sim.launch.py 会从 YAML 中读取 urdf_relpath 并自动启动 robot_state_pub
 - Esc: 退出
 
 实际步长和速度范围由 YAML 中 cmd_vx_step/cmd_vy_step/cmd_yaw_step 与 cmd_*_min/max 决定。
+
+## 多 Policy Profile 遥控切换
+
+障碍赛中如果每个障碍使用一个独立 HIMLoco policy，可以使用 profile 清单通过
+ROS2 Joy 按钮切换策略。详细说明见 `MULTI_POLICY_PROFILES.md`。
+
+快速启动示例：
+
+```bash
+ros2 launch deploy_cpp deploy.launch.py \
+  policy_profiles_file:=/path/to/deploy_cpp/config/policy_profiles/obstacle_course.yaml
+```
 
 ## QoS
 
