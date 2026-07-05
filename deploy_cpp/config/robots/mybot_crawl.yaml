@@ -188,12 +188,12 @@ joy_button_rl: 4
 #   X: 进入 JOINT_DAMPING (关节阻尼/软回中)
 joy_button_damping: 3
 #   LB: 进入 SINGLE_STEP_RL (单步策略/调试)
-joy_button_single_step: 2
-#   RB: 进入 JOINT_SWEEP (单关节扫动/调试)
-joy_button_joint_sweep: 5
-#   BACK: 进入 IDLE (零力矩)
-joy_button_idle: 6
-#   START: 二次确认/允许执行(防误触)
-joy_button_confirm: 7
-#   LOGO/POWER: 急停 (立即切 IDLE 并速度归零)
-joy_button_emergency: 8
+# joy_button_single_step: 2
+# #   RB: 进入 JOINT_SWEEP (单关节扫动/调试)
+# joy_button_joint_sweep: 5
+# #   BACK: 进入 IDLE (零力矩)
+# joy_button_idle: 6
+# #   START: 二次确认/允许执行(防误触)
+# joy_button_confirm: 7
+# #   LOGO/POWER: 急停 (立即切 IDLE 并速度归零)
+# joy_button_emergency: 8

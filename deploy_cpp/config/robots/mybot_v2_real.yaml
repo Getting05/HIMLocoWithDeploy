@@ -150,8 +150,8 @@ joy_button_stand_up: 0        # Y
 joy_button_return_default: 1  # B
 joy_button_rl: 4              # A
 joy_button_damping: 3
-joy_button_single_step: 2
-joy_button_joint_sweep: 5
-joy_button_idle: 6
-joy_button_confirm: 7
-joy_button_emergency: 8
+# joy_button_single_step: 2
+# joy_button_joint_sweep: 5
+# joy_button_idle: 6
+# joy_button_confirm: 7
+# joy_button_emergency: 8
