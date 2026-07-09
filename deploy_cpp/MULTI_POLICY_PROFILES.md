@@ -9,6 +9,7 @@
   - `deploy_cpp/config/robots/mybot_v2_real.yaml`
   - `deploy_cpp/config/robots/mybot_stair.yaml`
   - `deploy_cpp/config/robots/mybot_crawl.yaml`
+  - `deploy_cpp/config/robots/mybot_foot_adduction.yaml`
 - 主要实现：
   - `deploy_cpp/src/policy_profile_manager.cpp`
   - `deploy_cpp/src/deploy_node.cpp`
@@ -39,6 +40,13 @@ profiles:
     joy_axis:
       index: 7
       value: 32767
+
+  - id: foot_adduction
+    name: foot_adduction
+    config_file: ../robots/mybot_foot_adduction.yaml
+    joy_axis:
+      index: 6
+      value: -32767
 ```
 
 字段含义：
@@ -129,7 +137,7 @@ ros2 launch deploy_cpp sim.launch.py \
 1. 复制一个已经验证过的机器人 YAML。
 2. 修改 `policy_path` 指向新的 JIT policy 文件。
 3. 设置该 policy 对应的 `default_dof_pos`、`standup_target_pos` 和 `policy_dof_pos`。
-4. 根据训练设置调整 `action_scale`、PD 增益和速度范围。
+4. 根据训练设置调整 `action_scale`、PD 增益和速度范围；如果新 policy 只需要复用已有控制参数，则只改模型路径和三组姿态。
 5. 确认所有硬件不变量与其他启用 profile 完全一致。
 6. 在 `obstacle_course.yaml` 中新增一个 profile，填写唯一的 `id` 和未占用的 `joy_button` 或 `joy_axis`。
 7. 先用 `debug_no_motor:=true` 或 MuJoCo 验证切换流程，再上实机。

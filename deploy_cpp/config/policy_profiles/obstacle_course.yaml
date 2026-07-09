@@ -12,7 +12,7 @@
 #   上: Axis 7 = -32767
 #   右: Axis 6 =  32767
 #   下: Axis 7 =  32767
-#   左: Axis 6 = -32767  # 当前清单只有 3 个 policy，暂未绑定。
+#   左: Axis 6 = -32767
 # 运行时也兼容 joy_node 常见的归一化值 -1.0 / 1.0。
 
 initial_profile: walk
@@ -38,3 +38,10 @@ profiles:
     joy_axis:
       index: 7
       value: 32767
+
+  - id: foot_adduction
+    name: foot_adduction
+    config_file: ../robots/mybot_foot_adduction.yaml
+    joy_axis:
+      index: 6
+      value: -32767
