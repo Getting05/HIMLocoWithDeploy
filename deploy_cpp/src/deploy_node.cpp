@@ -657,6 +657,49 @@ private:
            joy_prev_buttons_[button_idx] != 0;
   }
 
+  bool joy_axis_matches(float raw, const JoyAxisTrigger &trigger) const {
+    float target = trigger.value;
+    float tolerance = trigger.tolerance;
+
+    if (std::fabs(target) > 1.0f && std::fabs(raw) <= 1.0f) {
+      target = std::copysign(1.0f, target);
+      if (tolerance > 1.0f) {
+        tolerance /= std::max(std::fabs(trigger.value), 1.0f);
+      }
+    } else if (std::fabs(target) <= 1.0f && std::fabs(raw) > 1.0f &&
+               std::fabs(target) > 0.0f) {
+      target *= 32767.0f;
+      if (tolerance >= 0.0f && tolerance <= 1.0f) {
+        tolerance *= 32767.0f;
+      }
+    }
+
+    if (tolerance < 0.0f) {
+      const float abs_target = std::fabs(target);
+      tolerance = abs_target <= 1.0f ? 0.5f
+                                     : std::max(1.0f, abs_target * 0.5f);
+    }
+    return std::fabs(raw - target) <= tolerance;
+  }
+
+  bool joy_axis_down(const sensor_msgs::msg::Joy &msg,
+                     const JoyAxisTrigger &trigger) const {
+    return trigger.axis >= 0 &&
+           static_cast<size_t>(trigger.axis) < msg.axes.size() &&
+           joy_axis_matches(msg.axes[trigger.axis], trigger);
+  }
+
+  bool joy_axis_was_down(const JoyAxisTrigger &trigger) const {
+    return trigger.axis >= 0 &&
+           static_cast<size_t>(trigger.axis) < joy_prev_axes_.size() &&
+           joy_axis_matches(joy_prev_axes_[trigger.axis], trigger);
+  }
+
+  void update_joy_prev_inputs(const sensor_msgs::msg::Joy &msg) {
+    joy_prev_buttons_.assign(msg.buttons.begin(), msg.buttons.end());
+    joy_prev_axes_.assign(msg.axes.begin(), msg.axes.end());
+  }
+
   float scale_joy_axis(float raw, bool invert, float min_value,
                        float max_value) const {
     raw = std::clamp(raw, -1.0f, 1.0f);
@@ -712,21 +755,29 @@ private:
       return joy_button_down(*msg, button_idx) &&
              !joy_button_was_down(button_idx);
     };
+    auto profile_trigger_rising = [this, &msg, &rising](
+                                      const PolicyProfile &profile) {
+      if (rising(profile.joy_button)) {
+        return true;
+      }
+      return profile.joy_axis && joy_axis_down(*msg, *profile.joy_axis) &&
+             !joy_axis_was_down(*profile.joy_axis);
+    };
 
     if (joy_button_down(*msg, config_.joy_button_emergency)) {
       joy_state_request_ = StateRequest{RobotState::IDLE, true};
       zero_joy_commands_locked();
-      joy_prev_buttons_.assign(msg->buttons.begin(), msg->buttons.end());
+      update_joy_prev_inputs(*msg);
       return;
     }
 
     if (profile_manager_ && profile_manager_->multi_profile_enabled()) {
       for (const auto &profile : profile_manager_->profiles()) {
-        if (rising(profile.joy_button)) {
+        if (profile_trigger_rising(profile)) {
           joy_profile_request_ = profile.id;
           joy_wait_neutral_ = true;
           zero_joy_commands_locked();
-          joy_prev_buttons_.assign(msg->buttons.begin(), msg->buttons.end());
+          update_joy_prev_inputs(*msg);
           return;
         }
       }
@@ -767,7 +818,7 @@ private:
       suction_pub_->publish(suction_msg);
     }
 
-    joy_prev_buttons_.assign(msg->buttons.begin(), msg->buttons.end());
+    update_joy_prev_inputs(*msg);
   }
 
   std::optional<StateRequest> consume_joy_state_request() {
@@ -1406,6 +1457,7 @@ private:
   mutable std::mutex joy_mutex_;
   std::array<float, 3> joy_cmd_{0.0f, 0.0f, 0.0f};
   std::vector<int32_t> joy_prev_buttons_;
+  std::vector<float> joy_prev_axes_;
   std::optional<StateRequest> joy_state_request_;
   std::optional<std::string> joy_profile_request_;
   bool joy_step_confirmed_ = false;

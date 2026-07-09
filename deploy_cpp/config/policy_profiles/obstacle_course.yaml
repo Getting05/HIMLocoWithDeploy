@@ -7,7 +7,13 @@
 # 所有启用的 profile 必须共享同一套硬件映射、串口、模型路径、
 # 关节限位和 control_dt；deploy_node 会在启动时校验这些硬件不变量。
 #
-# joy_button 索引来自 sensor_msgs/msg/Joy.buttons。
+# joy_axis 索引来自 sensor_msgs/msg/Joy.axes。
+# 方向键映射：
+#   上: Axis 7 = -32767
+#   右: Axis 6 =  32767
+#   下: Axis 7 =  32767
+#   左: Axis 6 = -32767  # 当前清单只有 3 个 policy，暂未绑定。
+# 运行时也兼容 joy_node 常见的归一化值 -1.0 / 1.0。
 
 initial_profile: walk
 
@@ -15,14 +21,20 @@ profiles:
   - id: walk
     name: normal_walk
     config_file: ../robots/mybot_v2_real.yaml
-    joy_button: 10
+    joy_axis:
+      index: 7
+      value: -32767
 
   - id: stair
     name: stair
     config_file: ../robots/mybot_stair.yaml
-    joy_button: 11
+    joy_axis:
+      index: 6
+      value: 32767
 
   - id: crawl
     name: crawl
     config_file: ../robots/mybot_crawl.yaml
-    joy_button: 12
+    joy_axis:
+      index: 7
+      value: 32767

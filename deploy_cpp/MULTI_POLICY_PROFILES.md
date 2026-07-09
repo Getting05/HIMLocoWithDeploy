@@ -1,6 +1,6 @@
 # 多 Policy Profile 遥控切换说明
 
-本文档说明障碍赛部署时如何在同一个 `deploy_node` 中通过遥控器切换多个 HIMLoco policy。核心约定是：每个障碍 policy 对应一个完整机器人 YAML，顶层 profile 清单只负责把遥控器按钮映射到这些 YAML。
+本文档说明障碍赛部署时如何在同一个 `deploy_node` 中通过遥控器切换多个 HIMLoco policy。核心约定是：每个障碍 policy 对应一个完整机器人 YAML，顶层 profile 清单只负责把遥控器输入映射到这些 YAML。
 
 ## 相关文件
 
@@ -22,17 +22,23 @@ profiles:
   - id: walk
     name: normal_walk
     config_file: ../robots/mybot_v2_real.yaml
-    joy_button: 10
+    joy_axis:
+      index: 7
+      value: -32767
 
   - id: stair
     name: stair
     config_file: ../robots/mybot_stair.yaml
-    joy_button: 11
+    joy_axis:
+      index: 6
+      value: 32767
 
   - id: crawl
     name: crawl
     config_file: ../robots/mybot_crawl.yaml
-    joy_button: 12
+    joy_axis:
+      index: 7
+      value: 32767
 ```
 
 字段含义：
@@ -41,7 +47,18 @@ profiles:
 - `id`：稳定标识，会显示在日志和 CSV 的 `profile_id` 列中。
 - `name`：便于阅读的人类名称。
 - `config_file`：指向完整机器人 YAML 的路径，相对于 profile 清单文件解析。
-- `joy_button`：`sensor_msgs/msg/Joy.buttons[index]`，按下后选择该 profile。
+- `joy_button`：可选，`sensor_msgs/msg/Joy.buttons[index]`，按下后选择该 profile。
+- `joy_axis`：可选，使用 `sensor_msgs/msg/Joy.axes[index]` 的指定值选择该 profile。方向键可写原始值 `±32767`；如果运行时收到的是 `joy_node` 常见归一化值 `±1.0`，也会自动识别。
+
+`joy_axis` 示例：
+
+```yaml
+joy_axis:
+  index: 7
+  value: -32767
+```
+
+`joy_button` 和 `joy_axis` 至少填写一个。二者都填写时，任意一个触发都会选择该 profile。
 
 ## 单个 Policy YAML 规则
 
@@ -94,7 +111,7 @@ ros2 launch deploy_cpp sim.launch.py \
 
 ## 运行时切换流程
 
-按下某个 profile 对应的遥控器按钮后，节点会自动执行以下流程：
+按下某个 profile 对应的遥控器按钮或方向键轴后，节点会自动执行以下流程：
 
 1. 立即清零遥控速度指令。
 2. 如果当前正在 RL，则 flush 当前 RL 关节 CSV 片段。
@@ -114,14 +131,14 @@ ros2 launch deploy_cpp sim.launch.py \
 3. 设置该 policy 对应的 `default_dof_pos`、`standup_target_pos` 和 `policy_dof_pos`。
 4. 根据训练设置调整 `action_scale`、PD 增益和速度范围。
 5. 确认所有硬件不变量与其他启用 profile 完全一致。
-6. 在 `obstacle_course.yaml` 中新增一个 profile，填写唯一的 `id` 和未占用的 `joy_button`。
+6. 在 `obstacle_course.yaml` 中新增一个 profile，填写唯一的 `id` 和未占用的 `joy_button` 或 `joy_axis`。
 7. 先用 `debug_no_motor:=true` 或 MuJoCo 验证切换流程，再上实机。
 
 ## 实机前检查清单
 
 - 运行 `colcon build --packages-select deploy_cpp`。
 - 先用 `debug_no_motor:=true` 启动，确认 profile 清单可以加载。
-- 逐个按下 profile 按钮，确认日志显示 `SWITCH_PROFILE` 后进入 `RL`。
+- 逐个按下 profile 按钮或方向键，确认日志显示 `SWITCH_PROFILE` 后进入 `RL`。
 - 确认状态行中的 `profile=<id>` 与当前障碍策略一致。
 - 确认 CSV 日志包含 `profile_id` 列。
 - 上实机时先在 `IDLE` 下逐个切换 profile，确认目标姿态正确，再测试 RL 中切换。

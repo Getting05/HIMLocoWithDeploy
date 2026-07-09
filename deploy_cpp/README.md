@@ -368,7 +368,7 @@ sim.launch.py 会从 YAML 中读取 urdf_relpath 并自动启动 robot_state_pub
 ## 多 Policy Profile 遥控切换
 
 障碍赛中如果每个障碍使用一个独立 HIMLoco policy，可以使用 profile 清单通过
-ROS2 Joy 按钮切换策略。详细说明见 `MULTI_POLICY_PROFILES.md`。
+ROS2 Joy 按钮或方向键轴切换策略。详细说明见 `MULTI_POLICY_PROFILES.md`。
 
 快速启动示例：
 

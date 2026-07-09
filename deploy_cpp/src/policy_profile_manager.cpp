@@ -5,6 +5,7 @@
 
 #include "policy_profile_manager.h"
 
+#include <cmath>
 #include <filesystem>
 #include <stdexcept>
 #include <utility>
@@ -27,6 +28,32 @@ void require_existing_file(const std::string &path, const std::string &label) {
       !std::filesystem::is_regular_file(path, ec)) {
     throw std::runtime_error(label + " does not exist: " + path);
   }
+}
+
+JoyAxisTrigger parse_joy_axis_trigger(const YAML::Node &node,
+                                      const std::string &source) {
+  require_node(node, "index", source);
+  require_node(node, "value", source);
+
+  JoyAxisTrigger trigger;
+  trigger.axis = node["index"].as<int>();
+  trigger.value = node["value"].as<float>();
+  if (node["tolerance"]) {
+    trigger.tolerance = node["tolerance"].as<float>();
+  }
+  return trigger;
+}
+
+std::string joy_axis_label(const JoyAxisTrigger &trigger) {
+  return "axis " + std::to_string(trigger.axis) + " value " +
+         std::to_string(trigger.value);
+}
+
+float canonical_joy_axis_value(float value) {
+  if (std::fabs(value) > 1.0f) {
+    return std::copysign(1.0f, value);
+  }
+  return value;
 }
 
 } // namespace
@@ -56,6 +83,28 @@ void PolicyProfileManager::add_profile(PolicyProfile profile) {
         "Duplicate policy profile joy_button " +
         std::to_string(profile.joy_button) + " for profiles '" +
         button_to_id_[profile.joy_button] + "' and '" + profile.id + "'");
+  }
+  if (profile.joy_axis) {
+    if (profile.joy_axis->axis < 0) {
+      throw std::runtime_error("Policy profile '" + profile.id +
+                               "' joy_axis.index must be >= 0");
+    }
+    if (profile.joy_axis->tolerance < -1.0f) {
+      throw std::runtime_error("Policy profile '" + profile.id +
+                               "' joy_axis.tolerance must be >= -1");
+    }
+    for (const auto &existing : profiles_) {
+      if (existing.joy_axis &&
+          existing.joy_axis->axis == profile.joy_axis->axis &&
+          std::fabs(canonical_joy_axis_value(existing.joy_axis->value) -
+                    canonical_joy_axis_value(profile.joy_axis->value)) <
+              1e-4f) {
+        throw std::runtime_error(
+            "Duplicate policy profile joy_axis " +
+            joy_axis_label(*profile.joy_axis) + " for profiles '" +
+            existing.id + "' and '" + profile.id + "'");
+      }
+    }
   }
 
   const size_t idx = profiles_.size();
@@ -102,7 +151,11 @@ void PolicyProfileManager::load_from_file(const std::string &profiles_file) {
   for (const auto &node : root["profiles"]) {
     require_node(node, "id", profiles_file);
     require_node(node, "config_file", profiles_file);
-    require_node(node, "joy_button", profiles_file);
+    if (!node["joy_button"] && !node["joy_axis"]) {
+      throw std::runtime_error(
+          "Each profile in " + profiles_file +
+          " must define either joy_button or joy_axis");
+    }
 
     PolicyProfile profile;
     profile.id = node["id"].as<std::string>();
@@ -110,7 +163,13 @@ void PolicyProfileManager::load_from_file(const std::string &profiles_file) {
     profile.config_file =
         resolve_path_from_file(profiles_file,
                                node["config_file"].as<std::string>());
-    profile.joy_button = node["joy_button"].as<int>();
+    if (node["joy_button"]) {
+      profile.joy_button = node["joy_button"].as<int>();
+    }
+    if (node["joy_axis"]) {
+      profile.joy_axis =
+          parse_joy_axis_trigger(node["joy_axis"], profiles_file);
+    }
 
     require_existing_file(profile.config_file,
                           "config_file for profile '" + profile.id + "'");

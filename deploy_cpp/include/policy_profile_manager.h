@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -14,11 +15,18 @@
 
 namespace deploy {
 
+struct JoyAxisTrigger {
+  int axis = -1;
+  float value = 0.0f;
+  float tolerance = -1.0f;
+};
+
 struct PolicyProfile {
   std::string id;
   std::string name;
   std::string config_file;
   int joy_button = -1;
+  std::optional<JoyAxisTrigger> joy_axis;
   RobotRuntimeConfig config;
   std::unique_ptr<PolicyRunner> runner;
 };
