@@ -328,6 +328,30 @@ joy_button_emergency: 8
 - `joy_button_return_default` 会进入 `RETURN_DEFAULT`：按当前姿态平滑插值回 `default_dof_pos`，完成后自动切回 `IDLE` 零力矩。
 - 若 UDP Web Teleop 已收到过数据，速度指令优先使用 UDP；只用手柄时不要启动 Web Teleop，或在 YAML 中关闭 `teleop_udp_enable`。
 
+### H. 手柄组合键重启 deploy_node
+
+`deploy_node` 在确认 `buttons[8]` 和 `buttons[9]` 都释放过后进入待触发状态；随后两键同时按下时，节点先执行正常关机清理，再以退出码 `75` 退出。组合键优先于这两个按钮各自的单键映射。
+
+启动端必须仅在收到退出码 `75` 时重启节点，例如：
+
+```bash
+while true; do
+  if ros2 run deploy_cpp deploy_node --ros-args \
+    -p policy_profiles_file:=/home/dog12/obstacle/HIMLocoWithDeploy/deploy_cpp/config/policy_profiles/obstacle_course.yaml; then
+    deploy_status=0
+  else
+    deploy_status=$?
+  fi
+  if [ "$deploy_status" -ne 75 ]; then
+    break
+  fi
+  echo "deploy_node requested restart; relaunching..."
+  sleep 1
+done
+```
+
+新进程同样要先收到一次两键均为 `0` 的 `/joy` 消息才会重新布防，因此长按组合键不会造成连续重启。
+
 ## launch 参数
 
 ### deploy.launch.py

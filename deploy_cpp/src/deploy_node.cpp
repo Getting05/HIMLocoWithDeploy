@@ -52,6 +52,10 @@
 
 namespace deploy {
 
+static constexpr int kRestartExitCode = 75;
+static constexpr int kJoyRestartButtonA = 8;
+static constexpr int kJoyRestartButtonB = 9;
+
 static constexpr const char *BANNER = R"(
 ╔══════════════════════════════════════════════════╗
 ║         Mybot Quadruped Deployment Node (C++)    ║
@@ -247,6 +251,10 @@ public:
     this->declare_parameter<int>("rl_joint_csv_flush_interval", 50);
   }
 
+  bool restart_requested() const {
+    return restart_requested_.load(std::memory_order_relaxed);
+  }
+
   void initialize() {
     auto config_file = this->get_parameter("robot_config_file").as_string();
     auto profiles_file =
@@ -351,10 +359,11 @@ public:
     uint64_t last_imu_msg_count = 0;
     auto last_print_time = std::chrono::steady_clock::now();
 
-    while (rclcpp::ok() && !keyboard_->is_exit()) {
+    while (rclcpp::ok() && !keyboard_->is_exit() && !restart_requested()) {
       // 1. Spin / wait for fresh state
       if (sim_mode_ && sim_pingpong_mode_ && mujoco_motor_) {
-        while (rclcpp::ok() && !keyboard_->is_exit()) {
+        while (rclcpp::ok() && !keyboard_->is_exit() &&
+               !restart_requested()) {
           rclcpp::spin_some(imu_);
           rclcpp::spin_some(this->shared_from_this());
 
@@ -370,6 +379,10 @@ public:
       } else {
         rclcpp::spin_some(imu_);
         rclcpp::spin_some(this->shared_from_this());
+      }
+
+      if (restart_requested()) {
+        break;
       }
 
       bool emergency_latched = false;
@@ -799,6 +812,32 @@ private:
       return profile.joy_axis && joy_axis_down(*msg, *profile.joy_axis) &&
              !joy_axis_was_down(*profile.joy_axis);
     };
+
+    const bool restart_button_a_down =
+        joy_button_down(*msg, kJoyRestartButtonA);
+    const bool restart_button_b_down =
+        joy_button_down(*msg, kJoyRestartButtonB);
+
+    // Arm only after both buttons have been observed released. This prevents a
+    // held combo from immediately restarting the newly launched process again.
+    if (!restart_button_a_down && !restart_button_b_down) {
+      joy_restart_armed_ = true;
+    }
+
+    if (joy_restart_armed_ && restart_button_a_down &&
+        restart_button_b_down) {
+      joy_restart_armed_ = false;
+      restart_requested_.store(true, std::memory_order_relaxed);
+      joy_state_request_.reset();
+      joy_profile_request_.reset();
+      zero_joy_commands_locked();
+      update_joy_prev_inputs(*msg);
+      RCLCPP_WARN(this->get_logger(),
+                  "Joystick buttons[8] + buttons[9] pressed: requesting "
+                  "deploy_node restart (exit code %d)",
+                  kRestartExitCode);
+      return;
+    }
 
     if (joy_button_down(*msg, config_.joy_button_emergency)) {
       joy_state_request_ = StateRequest{RobotState::IDLE, true};
@@ -1518,7 +1557,10 @@ private:
   bool joy_step_confirmed_ = false;
   bool joy_has_msg_ = false;
   bool joy_wait_neutral_ = false;
+  bool joy_restart_armed_ = false;
   std::chrono::steady_clock::time_point joy_last_msg_time_{};
+
+  std::atomic<bool> restart_requested_{false};
 
   // ---- Policy profile switch state ----
   bool profile_switch_active_ = false;
@@ -1573,6 +1615,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  const bool restart_requested = node->restart_requested();
   rclcpp::shutdown();
-  return 0;
+  return restart_requested ? deploy::kRestartExitCode : 0;
 }
