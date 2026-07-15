@@ -20,7 +20,7 @@ initial_profile: walk
 profiles:
   - id: walk
     name: normal_walk
-    config_file: ../robots/mybot_v2_real.yaml
+    config_file: ../robots/mybot_arm.yaml
     joy_axis:
       index: 7
       value: -32767

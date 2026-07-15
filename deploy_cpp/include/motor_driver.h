@@ -11,6 +11,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -75,6 +76,19 @@ public:
   bool check_errors() const;
 
   /**
+   * @brief Whether both serial ports are currently open and usable.
+   *
+   * Returns false after USB/serial disconnect until reopen succeeds.
+   */
+  bool ports_ok() const { return port_ok_[0] && port_ok_[1]; }
+
+  /**
+   * @brief Attempt to reopen any failed serial ports (rate-limited).
+   * @return true if both ports are healthy after the attempt
+   */
+  bool try_reopen_ports();
+
+  /**
    * @brief Calibrate encoder offsets at startup.
    *
    * Reads raw encoder positions and computes offsets so that
@@ -100,7 +114,16 @@ private:
   void send_single(int dof_idx, float q_joint, float dq_joint, float kp,
                    float kd, float tau);
 
+  bool reopen_port(int port_idx);
+  bool ensure_port_ready(int port_idx);
+  void mark_port_failed(int port_idx, const char *reason);
+
   std::unique_ptr<SerialPort> serials_[2];
+  std::string port_paths_[2];
+  bool port_ok_[2]{true, true};
+  // 上次看到设备节点仍在。拔掉后置 false，插回后必须重新 open。
+  bool path_present_[2]{true, true};
+  std::chrono::steady_clock::time_point last_reopen_attempt_[2]{};
   std::unique_ptr<MotorCmd> cmd_;
   std::unique_ptr<MotorData> data_;
   int foc_mode_;
