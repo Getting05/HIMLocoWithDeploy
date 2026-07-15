@@ -385,6 +385,27 @@ public:
             }
           };
 
+      // 拔掉一般只 don't reply；重新插上若复用旧 fd 才会 tcgetattr 杀进程。
+      // MotorDriver 会在路径消失时释放句柄、插回后重新 open。
+      if (motor_) {
+        const bool was_ok = serial_ports_ok_;
+        const bool now_ok = motor_->try_reopen_ports();
+        serial_ports_ok_ = now_ok;
+        if (was_ok && !now_ok) {
+          RCLCPP_ERROR(this->get_logger(),
+                       "Motor USB path lost. Forcing IDLE; will reopen on "
+                       "replug (no process exit).");
+          handle_pending_state_request({RobotState::IDLE, true});
+        } else if (!was_ok && now_ok) {
+          RCLCPP_WARN(this->get_logger(),
+                      "Motor serial reopened after replug. Stay IDLE until "
+                      "you re-arm (stand-up).");
+          handle_pending_state_request({RobotState::IDLE, true});
+        } else if (!now_ok && sm_->state() != RobotState::IDLE) {
+          handle_pending_state_request({RobotState::IDLE, true});
+        }
+      }
+
       // 2a. Handle UDP teleop commands (if enabled)
       if (udp_ctrl_ && udp_ctrl_->has_data()) {
         auto cmd = udp_ctrl_->get_latest();
@@ -424,31 +445,46 @@ public:
       }
 
       // 3. Execute current state logic
-      if (profile_switch_active_) {
-        handle_profile_switch();
-      } else {
-        switch (sm_->state()) {
-        case RobotState::IDLE:
-          handle_idle();
-          break;
-        case RobotState::STAND_UP:
-          handle_standup();
-          break;
-        case RobotState::RL:
-          handle_rl();
-          break;
-        case RobotState::JOINT_DAMPING:
-          handle_joint_damping();
-          break;
-        case RobotState::RETURN_DEFAULT:
-          handle_return_default();
-          break;
-        case RobotState::JOINT_SWEEP:
-          handle_joint_sweep();
-          break;
-        case RobotState::SINGLE_STEP_RL:
-          handle_single_step_rl();
-          break;
+      try {
+        if (profile_switch_active_) {
+          handle_profile_switch();
+        } else {
+          switch (sm_->state()) {
+          case RobotState::IDLE:
+            handle_idle();
+            break;
+          case RobotState::STAND_UP:
+            handle_standup();
+            break;
+          case RobotState::RL:
+            handle_rl();
+            break;
+          case RobotState::JOINT_DAMPING:
+            handle_joint_damping();
+            break;
+          case RobotState::RETURN_DEFAULT:
+            handle_return_default();
+            break;
+          case RobotState::JOINT_SWEEP:
+            handle_joint_sweep();
+            break;
+          case RobotState::SINGLE_STEP_RL:
+            handle_single_step_rl();
+            break;
+          }
+        }
+      } catch (const std::exception &e) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Motor control exception (kept running): %s", e.what());
+        serial_ports_ok_ = false;
+        handle_pending_state_request({RobotState::IDLE, true});
+      }
+
+      // 发送过程中也可能刚拔掉/插上串口；立刻降级，避免继续 RL。
+      if (motor_ && !motor_->ports_ok()) {
+        serial_ports_ok_ = false;
+        if (sm_->state() != RobotState::IDLE) {
+          handle_pending_state_request({RobotState::IDLE, true});
         }
       }
 
@@ -1059,12 +1095,18 @@ private:
   // ------------------------------------------------------------------ //
 
   void handle_idle() {
-    if (motor_) {
-      motor_->set_zero_torque();
-    } else if (mujoco_motor_) {
-      mujoco_motor_->set_zero_torque();
-    } else if (fake_motor_) {
-      fake_motor_->set_zero_torque();
+    try {
+      if (motor_) {
+        motor_->set_zero_torque();
+      } else if (mujoco_motor_) {
+        mujoco_motor_->set_zero_torque();
+      } else if (fake_motor_) {
+        fake_motor_->set_zero_torque();
+      }
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Motor set_zero_torque failed (kept running): %s", e.what());
+      serial_ports_ok_ = false;
     }
   }
 
@@ -1160,12 +1202,18 @@ private:
   }
 
   void handle_joint_damping() {
-    if (motor_) {
-      motor_->send_damping(config_.kd_damp_motor);
-    } else if (mujoco_motor_) {
-      mujoco_motor_->send_damping(config_.kd_damp_motor);
-    } else if (fake_motor_) {
-      fake_motor_->send_damping(config_.kd_damp_motor);
+    try {
+      if (motor_) {
+        motor_->send_damping(config_.kd_damp_motor);
+      } else if (mujoco_motor_) {
+        mujoco_motor_->send_damping(config_.kd_damp_motor);
+      } else if (fake_motor_) {
+        fake_motor_->send_damping(config_.kd_damp_motor);
+      }
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Motor send_damping failed (kept running): %s", e.what());
+      serial_ports_ok_ = false;
     }
   }
 
@@ -1332,12 +1380,18 @@ private:
   void send_to_motors(const std::array<float, NUM_JOINTS> &target,
                       const std::array<float, NUM_JOINTS> &kp,
                       const std::array<float, NUM_JOINTS> &kd) {
-    if (motor_) {
-      motor_->send_commands(target, kp, kd);
-    } else if (mujoco_motor_) {
-      mujoco_motor_->send_commands(target, kp, kd);
-    } else if (fake_motor_) {
-      fake_motor_->send_commands(target, kp, kd);
+    try {
+      if (motor_) {
+        motor_->send_commands(target, kp, kd);
+      } else if (mujoco_motor_) {
+        mujoco_motor_->send_commands(target, kp, kd);
+      } else if (fake_motor_) {
+        fake_motor_->send_commands(target, kp, kd);
+      }
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Motor send_commands failed (kept running): %s", e.what());
+      serial_ports_ok_ = false;
     }
   }
 
@@ -1429,6 +1483,7 @@ private:
 
   std::shared_ptr<IMUSubscriber> imu_;
   std::unique_ptr<MotorDriver> motor_;
+  bool serial_ports_ok_ = true; // tracks MotorDriver USB/serial health
   std::unique_ptr<FakeMotorDriver> fake_motor_;
   std::unique_ptr<MujocoMotorDriver> mujoco_motor_;
   std::unique_ptr<KeyboardController> keyboard_;

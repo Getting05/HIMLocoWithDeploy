@@ -11,7 +11,7 @@ decimation: 4
 num_of_dofs: 12
 
 # 固定姿态/站起等非策略阶段使用的关节 P/D 增益
-fixed_kp: [40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
+fixed_kp: [40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 80.0, 80.0, 40.0, 40.0, 80.0, 80.0]
 fixed_kd: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 # 电机力矩上限(关节侧语义): 超限会被裁剪以保护电机/机械结构
 torque_limits: [23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5]
@@ -30,13 +30,14 @@ joint_transmission_ratio: [6.33, 6.33, 14.77, 6.33, 6.33, 14.77, 6.33, 6.33, 14.
 # ---- 关节角度 (全部按 Policy DOF 顺序: FL, FR, RL, RR) ----
 #                         FL_hip FL_th FL_cf  FR_hip FR_th FR_cf  RL_hip RL_th RL_cf  RR_hip RR_th  RR_cf
 # default_dof_pos:       [  0.0,  1.27, -2.6, 0.0,  1.27, -2.70,  0.0,  1.27, -2.60, 0.0, 1.27, -2.70]
+# default_dof_pos:       [  0.1,  1.27, -2.70, -0.1,  1.27, -2.70,  0.1,  1.27, -2.70, -0.1, 1.27, -2.70]
 default_dof_pos:       [  0.1,  1.27, -2.70, -0.1,  1.27, -2.70,  0.1,  1.27, -2.70, -0.1, 1.27, -2.70]
 
 # default_dof_pos:       [  0.1, 1.1, -2.65, -0.1, 1.1, -2.65,  0.1, 1.1, -2.65, -0.1, 1.1, -2.65]
 
 # standup_target_pos:    [  0.1,  0.8,  -1.5,  -0.1,  0.8,  -1.5,   0.1,  1.0,  -1.5,  -0.1,  1.0,  -1.5 ]
 # policy_dof_pos:        [  0.1,  0.8,  -1.5,  -0.1,  0.8,  -1.5,   0.1,  1.0,  -1.5,  -0.1,  1.0,  -1.5 ]
-standup_target_pos:    [  0.1,  0.8,  -1.5,  -0.1,  0.8,  -1.5,   0.1,  1.0,  -1.5,  -0.1,  1.0,  -1.5 ]
+standup_target_pos:    [  0.1,  0.8,  -1.5,  -0.1,  0.8,  -1.5,   0.1,  1.0,  -1.35,  -0.1,  1.0,  -1.35 ]
 # policy_dof_pos:        [  0.0,  0.8,  -1.5,  -0.0,  0.8,  -1.5,   0.0,  1.0,  -1.5,  -0.0,  1.0,  -1.5 ]
 policy_dof_pos:        [  0.1,  0.8,  -1.5,  -0.1,  0.8,  -1.5,   0.1,  1.0,  -1.5,  -0.1,  1.0,  -1.5 ]
 
@@ -95,8 +96,9 @@ mujoco_xml_relpath: robot/mybot_v3/xml/mybot_v3.xml
 isaac_xml_relpath: robot/mybot_v3/xml/mybot_v3.xml
 
 # 策略/跟踪控制阶段的关节 P/D 增益(关节侧)
-# kp_joint: [40.0, 45.0, 45.0, 40.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0] # 换碳前的KP
-kp_joint: [40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
+# kp_joint: [45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0] # 换碳前的KP
+kp_joint: [41.0, 41.0, 41.0, 41.0, 41.0, 41.0, 41.0, 41.0, 41.0, 41.0, 41.0, 41.0]
+# kp_joint: [40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
 # kp_joint: [35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0]
 # kp_joint: [30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0]
 
@@ -117,8 +119,8 @@ dof_vel_scale: [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05
 # action_scale: [0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12]
 # action_scale: [0.14, 0.14, 0.14, 0.14, 0.14, 0.14, 0.14, 0.14, 0.14, 0.14, 0.14, 0.14]
 
-action_scale: [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15]
-# action_scale: [0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16]
+# action_scale: [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.15]
+action_scale: [0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16, 0.16]
 
 # action_scale: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
 # action_scale: [0.215, 0.215, 0.215, 0.215, 0.215, 0.215, 0.215, 0.215, 0.215, 0.215, 0.215, 0.215]
@@ -187,21 +189,23 @@ joy_invert_vx: false
 joy_invert_vy: false
 joy_invert_yaw: false
 # 按键映射: 将 Joy.buttons[index] 触发到状态机命令
+#   设为 -1 表示禁用该功能，防止误触
 #   A: 进入 STAND_UP (站起)
 joy_button_stand_up: 0
 #   B: 进入 RETURN_DEFAULT (回默认姿态, 完成后 IDLE)
 joy_button_return_default: 1  # B
 #   Y: 进入 RL 模式 (策略控制)
 joy_button_rl: 4
-#   以下按键当前未使用，注释保留供参考
-# joy_button_damping: 3
-# joy_button_single_step: 2
-# joy_button_joint_sweep: 5
-# joy_button_idle: 6
-# joy_button_confirm: 7
-# joy_button_emergency: 8
-
-# ---- 吸取控制按键映射 ----
-# 吸取指令通过 /suction_action 话题 (std_msgs/UInt8) 发布
-joy_button_suction_stand: 7    # R1 (buttons[7]): 站着吸取 ACTION_STAND_SUCTION data=1
-joy_button_suction_lie: 9      # R2 (buttons[9]): 趴着吸取 ACTION_LIE_SUCTION data=2
+# 以下功能已禁用 (-1)
+joy_button_damping: -1
+joy_button_single_step: -1
+joy_button_joint_sweep: -1
+joy_button_idle: -1
+joy_button_confirm: -1
+joy_button_emergency: -1
+joy_button_suction_stand: -1
+joy_button_suction_lie: -1
+# X 键: 触发导航启动信号（点击后每 500ms 持续发 /start_nav, Bool data=true）
+joy_button_start_nav: 3
+start_nav_topic: /start_nav
+start_nav_publish_interval_ms: 500

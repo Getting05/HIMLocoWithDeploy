@@ -33,7 +33,7 @@ decimation: 4
 num_of_dofs: 12
 
 # fixed_kp: [35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0]
-fixed_kp: [40.0, 40.0, 40.0, 40.0, 40.0, 80.0, 40.0, 40.0, 40.0, 40.0, 40.0, 80.0]
+fixed_kp: [40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]
 
 fixed_kd: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 torque_limits: [23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5, 23.5]
@@ -97,10 +97,12 @@ port1: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT6THBYZ-if00-port0
 imu_topic: /fast_livo2/state6_imu_prop 
 # Sensor-to-robot yaw correction (deg): clockwise 90 deg => -90.
 imu_yaw_correction_deg: 0.0
-robot_name: mybot_v2_1_real
-urdf_relpath: robot/mybot_v2_1/urdf/mybot_v2_1.urdf
-mujoco_xml_relpath: robot/mybot_v2_1/xml/mybot_v2_1.xml
-isaac_xml_relpath: robot/mybot_v2_1/xml/mybot_v2_1.xml
+# 机器人名称: 用于日志/可视化命名
+robot_name: mybot_v3_real
+# 模型路径(URDF 用于 TF/RViz, XML 用于仿真/解析)
+urdf_relpath: robot/mybot_v3/urdf/mybot_v3.urdf
+mujoco_xml_relpath: robot/mybot_v3/xml/mybot_v3.xml
+isaac_xml_relpath: robot/mybot_v3/xml/mybot_v3.xml
 
 # kp_joint: [35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0]
 kp_joint: [40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0]

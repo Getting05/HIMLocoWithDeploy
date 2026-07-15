@@ -5,6 +5,7 @@
 
 #include "keyboard_controller.h"
 
+#include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/select.h>
@@ -21,6 +22,23 @@ KeyboardController::KeyboardController(const RobotRuntimeConfig& config)
     // Save original terminal settings
     if (tcgetattr(fd_, &old_settings_) == 0) {
         terminal_saved_ = true;
+    } else {
+        // stdin is not a TTY (e.g. launched via ros2 launch where stdin is a pipe).
+        // Fall back to /dev/tty which is the controlling terminal of the process.
+        int tty_fd = ::open("/dev/tty", O_RDONLY | O_NOCTTY);
+        if (tty_fd >= 0) {
+            std::cout << "[Keyboard] stdin is not a TTY, using /dev/tty instead"
+                      << std::endl;
+            fd_ = tty_fd;
+            if (tcgetattr(fd_, &old_settings_) == 0) {
+                terminal_saved_ = true;
+            }
+        } else {
+            std::cout << "[Keyboard] WARNING: stdin is not a TTY and /dev/tty "
+                         "is unavailable. Keyboard input will not work. Use "
+                         "joystick or UDP teleop instead."
+                      << std::endl;
+        }
     }
 
     // Start keyboard listener thread
@@ -223,6 +241,12 @@ void KeyboardController::cleanup()
         thread_.join();
     }
     restore_terminal();
+
+    // Close /dev/tty fd if we opened it (not STDIN_FILENO)
+    if (fd_ != STDIN_FILENO && fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
 }
 
 }  // namespace deploy
